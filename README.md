@@ -1,7 +1,9 @@
 
 # Dockwatch
 
-A terminal-based docker container manager that actually works.
+A terminal-based docker container manager that actually ***works***.
+
+![dockwatch screenshot](screenshot.png)
 
 ## What is this?
 
