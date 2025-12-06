@@ -1,0 +1,22 @@
+# Binaries
+dockwatch
+*.exe
+*.out
+*.test
+
+# Go
+vendor/
+*.so
+*.dylib
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
