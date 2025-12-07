@@ -1,7 +1,20 @@
+<div align="center">
 
-# Dockwatch
+# DockWatch 💻
+A terminal-based Docker container manager that actually ***works***.
 
-A terminal-based docker container manager that actually ***works***.
+---
+
+<!-- Badges -->
+![WakaTime](https://wakatime.com/badge/github/shubh-io/DockWatch.svg)
+![GitHub Stars](https://img.shields.io/github/stars/shubh-io/DockWatch)
+![License](https://img.shields.io/github/license/shubh-io/Dockwatch)
+![Pull Requests](https://img.shields.io/github/issues-pr/shubh-io/DockWatch)
+![Last Commit](https://img.shields.io/github/last-commit/shubh-io/DockWatch)
+![Repo Size](https://img.shields.io/github/repo-size/shubh-io/DockWatch)
+
+</div>
+
 
 ![dockwatch screenshot](screenshot.png)
 
