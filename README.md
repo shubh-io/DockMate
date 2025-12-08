@@ -26,7 +26,7 @@ Tired of typing `docker ps` a million times? me too. This is a simple TUI (text 
 
 ## Features
 
-- Live container stats (CPU, memory, PIDs)
+- Live container stats (CPU, memory, PIDs, Net I/O, Block I/O)
 - Start/stop/restart containers with a single keypress
 - View container logs (last 100 lines)
 - Interactive shell access
@@ -39,26 +39,63 @@ Tired of typing `docker ps` a million times? me too. This is a simple TUI (text 
 
 - Docker installed and running
 - Linux (tested on Ubuntu/Debian)
-- Go 1.24+ (if building from source)
+- Go 1.24+ (IF building from source)
 
 *Note: Should work on macOS with Docker. Windows support untested.*
 
 ## Installation
 
+You can install DockMate quickly using the installer script, or build it from source if you prefer.
+
+- Install with one line (recommended):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/shubh-io/dockmate/main/install.sh | bash
 ```
-# clone the repo
+
+- Build from source (if you want to tweak or contribute):
+
+```bash
 git clone https://github.com/shubh-io/dockmate
 cd dockmate
-
-# build it
 go build -o dockmate
-
-# run it
-./dockmate
-
-# optional: install globally
+# to make it available system-wide (optional)
 sudo mv dockmate /usr/local/bin/
 ```
+
+Run the app:
+
+```bash
+dockmate
+```
+
+Update anytime
+
+```bash
+# from the running install method
+dockmate update
+
+# or simply re-run the installer
+curl -fsSL https://raw.githubusercontent.com/shubh-io/dockmate/main/install.sh | bash
+```
+
+Verify downloads (optional but recommended)
+
+If you want extra assurance when installing a release, we publish SHA256 checksums alongside binaries. After downloading a release asset and its `.sha256` file you can verify the binary locally:
+
+```bash
+# download the binary and the checksum file (example for v0.0.2)
+curl -fsSL -o dockmate-linux-amd64 https://github.com/shubh-io/dockmate/releases/download/v0.0.2/dockmate-linux-amd64
+curl -fsSL -o dockmate-linux-amd64.sha256 https://github.com/shubh-io/dockmate/releases/download/v0.0.2/dockmate-linux-amd64.sha256
+
+# verify (Linux)
+sha256sum -c dockmate-linux-amd64.sha256
+
+# or on macOS
+shasum -a 256 -c dockmate-linux-amd64.sha256
+```
+
+The installer script will also attempt to fetch and verify a matching `.sha256` file automatically; if the checksum is present and doesn't match the downloaded binary, installation will abort.
 
 ## Usage
 

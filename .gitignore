@@ -20,3 +20,17 @@ vendor/
 .DS_Store
 Thumbs.db
 
+# Build artifacts
+dockmate
+dockmate-*
+*.sha256
+checksums.txt
+
+# Test releases
+.goreleaser.snapshot.yml
+
+# GoReleaser
+dist/
+*.deb
+*.rpm
+

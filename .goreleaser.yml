@@ -1,0 +1,40 @@
+# .goreleaser.yml
+project_name: dockmate
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - binary: dockmate
+    main: .
+    goos:
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    env:
+      - CGO_ENABLED=0
+    ldflags:
+      - -s -w -X main.version={{.Version}}
+
+archives:
+  - format: binary
+    name_template: "{{ .Binary }}-{{ .Os }}-{{ .Arch }}"
+
+checksum:
+  name_template: 'checksums.txt'
+  algorithm: sha256
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - '^docs:'
+      - '^test:'
+      - '^chore:'
+
+release:
+  github:
+    owner: shubh-io
+    name: dockmate 

@@ -12,6 +12,12 @@ import (
 // ============================================================================
 
 func main() {
+
+	if len(os.Args) > 1 && os.Args[1] == "update" {
+		updateCommand()
+		return
+	}
+
 	result := RunPreChecks()
 
 	if !result.Passed {
