@@ -1,7 +1,7 @@
 <div align="center">
 
 # DockMate 🐳  
-A terminal-based Docker container manager that actually **works**.
+### A terminal-based Docker container manager that actually **works**.
 
 ![WakaTime](https://wakatime.com/badge/github/shubh-io/DockMate.svg)
 ![Version](https://img.shields.io/badge/version-0.0.3-blue)
@@ -23,7 +23,7 @@ A terminal-based Docker container manager that actually **works**.
 
 ## Overview
 
-DockMate is a TUI (text user interface) for managing Docker containers without leaving your terminal.  
+DockMate is a **TUI (Text User Interface)** for **managing Docker containers** directly from your terminal.  
 Think of `htop`, but for Docker.
 
 - See live container stats at a glance
