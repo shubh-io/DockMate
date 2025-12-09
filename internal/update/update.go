@@ -1,4 +1,4 @@
-package main
+package update
 
 import (
 	"fmt"
@@ -6,12 +6,12 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+
+	"github.com/shubh-io/dockmate/pkg/version"
 )
 
 // getLatestReleaseTag fetches the latest release tag name from GitHub for the given repo (owner/repo)
-// This uses a small shell pipeline to keep the implementation compact and
-// behave like the suggested one-liner:
-// curl -s https://api.github.com/repos/$REPO/releases/latest | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/'
+// This uses a small shell pipeline to keep the implementation compact
 func getLatestReleaseTag(repo string) (string, error) {
 	// build the shell command; use the compact pipeline suggested by the user
 	cmd := fmt.Sprintf("curl -s https://api.github.com/repos/%s/releases/latest | grep '\"tag_name\":' | sed -E 's/.*\"([^\"]+)\".*/\\1/'", repo)
@@ -88,13 +88,13 @@ func compareSemver(a, b string) int {
 	return 0
 }
 
-func updateCommand() {
+func UpdateCommand() {
 	fmt.Println("Checking for updates...")
 
 	// Ensure we have the current version constant available
-	current := Version
+	current := version.Version
 
-	latestTag, err := getLatestReleaseTag(Repo)
+	latestTag, err := getLatestReleaseTag(version.Repo)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Could not check latest release: %v\n", err)
 		return
@@ -110,15 +110,35 @@ func updateCommand() {
 	fmt.Printf("New release available: %s → %s\n", current, latestTag)
 	fmt.Println("Re-running installer to update...")
 
-	// Re-run the install script (same as before)
-	// NOTE: this runs `sudo` in the command; behavior on Windows may vary.
-	cmd := exec.Command("bash", "-c", "curl -fsSL https://raw.githubusercontent.com/shubh-io/dockmate/main/install.sh | sudo bash")
+	// Try piped install first
+	cmd := exec.Command("bash", "-c", "curl -fsSL https://raw.githubusercontent.com/shubh-io/dockmate/main/install.sh | bash")
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 
 	if err := cmd.Run(); err != nil {
-		fmt.Printf("Update failed: %v\n", err)
-		return
+		fmt.Println("Piped install failed, trying fallback method...")
+
+		// Fallback- download script, run it, then delete it lol
+		downloadCmd := exec.Command("bash", "-c", "curl -fsSL https://raw.githubusercontent.com/shubh-io/dockmate/main/install.sh -o install.sh")
+		if err := downloadCmd.Run(); err != nil {
+			fmt.Printf("Failed to download install script: %v\n", err)
+			return
+		}
+
+		runCmd := exec.Command("bash", "install.sh")
+		runCmd.Stdout = os.Stdout
+		runCmd.Stderr = os.Stderr
+		if err := runCmd.Run(); err != nil {
+			fmt.Printf("Update failed: %v\n", err)
+			// Still try to clean up
+			os.Remove("install.sh")
+			return
+		}
+
+		// Clean up the script file
+		if err := os.Remove("install.sh"); err != nil {
+			fmt.Printf("Warning: could not remove install.sh: %v\n", err)
+		}
 	}
 
 	fmt.Println("Updated successfully!")

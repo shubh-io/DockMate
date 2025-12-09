@@ -1,4 +1,4 @@
-package main
+package docker
 
 import (
 	"bufio"
@@ -10,44 +10,9 @@ import (
 	"time"
 )
 
-// ============================================================================
-// Container types
-// ============================================================================
-
-// Container holds all the data we show in the TUI
-type Container struct {
-	ID      string   // short container id
-	Names   []string // can have multiple names
-	Image   string   // image name like "nginx:latest"
-	Status  string   // human readable status
-	State   string   // running/exited/etc
-	Memory  string   // mem usage %
-	CPU     string   // cpu usage %
-	PIDs    string   // process count
-	NetIO   string   // network I/O
-	BlockIO string   // block I/O
-}
-
-// sent when we finish fetching the container list
-type containersMsg struct {
-	containers []Container
-	err        error
-}
-
-// sent when logs are ready
-type logsMsg struct {
-	id    string
-	lines []string
-	err   error
-}
-
-// ============================================================================
-// Docker stats
-// ============================================================================
-
-// grab cpu/mem/pids for a container
+// GetContainerStats grabs cpu/mem/pids for a container
 // returns empty strings on error so we don't block the UI
-func GetContainerStats(containerID string) (cpu string, mem string, pids string, NetIO string, BlockIO string, err error) {
+func GetContainerStats(containerID string) (cpu string, mem string, pids string, netIO string, blockIO string, err error) {
 	// 3 sec timeout because some containers are weird and hang
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
@@ -79,11 +44,7 @@ func GetContainerStats(containerID string) (cpu string, mem string, pids string,
 	return s.CPUPerc, s.MemPerc, s.PIDs, s.NetIO, s.BlockIO, nil
 }
 
-// ============================================================================
-// Logs
-// ============================================================================
-
-// fetch logs from a container
+// GetLogs fetches logs from a container
 // skips empty lines and trims whitespace
 func GetLogs(containerID string) ([]string, error) {
 	// 5 sec timeout
@@ -92,6 +53,7 @@ func GetLogs(containerID string) ([]string, error) {
 
 	// run docker logs but only tail the last 100 lines to avoid huge output
 	// using the CLI --tail is more efficient than fetching everything then truncating
+	// saves resources and time
 	cmd := exec.CommandContext(ctx, "docker", "logs", "--tail", "100", containerID)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
@@ -131,13 +93,9 @@ func GetLogs(containerID string) ([]string, error) {
 	return out, nil
 }
 
-// ============================================================================
-// List containers
-// ============================================================================
-
-// get all containers using docker CLI
+// ListContainers gets all containers using docker CLI
 // grabs live stats for running ones
-func ListContainersUsingCLI() ([]Container, error) {
+func ListContainers() ([]Container, error) {
 	// 30 sec timeout since we fetch stats for each running container
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -182,7 +140,7 @@ func ListContainersUsingCLI() ([]Container, error) {
 			return nil, fmt.Errorf("parsing docker output: %w", err)
 		}
 
-		// split comma-separated names
+		// split comma separated names
 		names := []string{}
 		if e.Names != "" {
 			for _, n := range strings.Split(e.Names, ",") {
@@ -199,7 +157,7 @@ func ListContainersUsingCLI() ([]Container, error) {
 			State:  e.State,
 		}
 
-		// collect running container IDs for batch stats fetch
+		// collect running container Ids for batch stats fetch
 		if e.State == "running" {
 			runningIDs = append(runningIDs, e.ID)
 		}
@@ -238,17 +196,8 @@ func ListContainersUsingCLI() ([]Container, error) {
 	return out, nil
 }
 
-// ContainerStats holds stats for a single container
-type ContainerStats struct {
-	CPU     string
-	Memory  string
-	PIDs    string
-	NetIO   string
-	BlockIO string
-}
-
 // GetAllContainerStats fetches stats for multiple containers in a single docker stats call
-// This is MUCH MUCH MUCH faster than calling docker stats separately for each container
+// This is MUCH MUCH MUCH faster than previously calling docker stats separately for each container
 func GetAllContainerStats(containerIDs []string) (map[string]ContainerStats, error) {
 	if len(containerIDs) == 0 {
 		return nil, nil
@@ -258,7 +207,7 @@ func GetAllContainerStats(containerIDs []string) (map[string]ContainerStats, err
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	// Build command with ALLcontainer IDs instead of one by one like old logic flow which resulted in more loading time
+	// Build command with all container IDs instead of one by one like old logic flow which resulted in more loading time
 	args := []string{"stats", "--no-stream", "--format", "{{json .}}"}
 	args = append(args, containerIDs...)
 
@@ -317,13 +266,9 @@ func GetAllContainerStats(containerIDs []string) (map[string]ContainerStats, err
 	return statsMap, nil
 }
 
-// ============================================================================
-// Container actions
-// ============================================================================
-
-// run a docker command on a container
+// DoAction runs a docker command on a container
 // works with start, stop, restart, rm, etc
-func dockerAction(action, containerID string) error {
+func DoAction(action, containerID string) error {
 	// 30 sec timeout
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()

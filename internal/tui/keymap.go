@@ -1,4 +1,4 @@
-package main
+package tui
 
 import (
 	"github.com/charmbracelet/bubbles/key"
@@ -30,7 +30,7 @@ type keyMap struct {
 
 // global keymap
 // supports vim keys (hjkl) and arrows
-var keys = keyMap{
+var Keys = keyMap{
 	Up:       key.NewBinding(key.WithKeys("up", "k")),
 	Down:     key.NewBinding(key.WithKeys("down", "j")),
 	Start:    key.NewBinding(key.WithKeys("s")),

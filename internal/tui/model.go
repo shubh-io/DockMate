@@ -1,17 +1,17 @@
-package main
+package tui
 
 import (
 	"fmt"
-	"time"
-
 	"os/exec"
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/shubh-io/dockmate/internal/docker"
 )
 
 // ============================================================================
@@ -122,23 +122,23 @@ var (
 
 // model holds everything for the TUI
 type model struct {
-	containers     []Container // all containers (running + stopped)
-	cursor         int         // selected container index
-	page           int         // current page
-	pageSize       int         // containers per page
-	width          int         // terminal width
-	height         int         // terminal height
-	err            error       // last error
-	loading        bool        // fetching data?
-	message        string      // status message
-	startTime      time.Time   // when app started
-	showLogs       bool        // logs panel visible?
-	logsLines      []string    // log lines
-	logsContainer  string      // container id for logs
-	sortBy         sortColumn  // which column to sort by
-	sortAsc        bool        // sort direction
-	columnMode     bool        // column nav mode (vs row nav)
-	selectedColumn int         // selected column (0-8)
+	containers     []docker.Container // all containers (running + stopped)
+	cursor         int                // selected container index
+	page           int                // current page
+	pageSize       int                // containers per page
+	width          int                // terminal width
+	height         int                // terminal height
+	err            error              // last error
+	loading        bool               // fetching data?
+	message        string             // status message
+	startTime      time.Time          // when app started
+	showLogs       bool               // logs panel visible?
+	logsLines      []string           // log lines
+	logsContainer  string             // container id for logs
+	sortBy         sortColumn         // which column to sort by
+	sortAsc        bool               // sort direction
+	columnMode     bool               // column nav mode (vs row nav)
+	selectedColumn int                // selected column (0-8)
 }
 
 // which column to sort by
@@ -161,7 +161,7 @@ const (
 // ============================================================================
 
 // set up initial state
-func initialModel() model {
+func InitialModel() model {
 	return model{
 		loading:        true,        // start loading
 		startTime:      time.Now(),  // track uptime
@@ -200,8 +200,8 @@ type tickMsg time.Time
 // grab container list in background
 func fetchContainers() tea.Cmd {
 	return func() tea.Msg {
-		containers, err := ListContainersUsingCLI()
-		return containersMsg{containers: containers, err: err}
+		containers, err := docker.ListContainers()
+		return docker.ContainersMsg{Containers: containers, Err: err}
 	}
 }
 
@@ -215,7 +215,7 @@ func tickCmd() tea.Cmd {
 // run docker action in background (start/stop/etc)
 func doAction(action, containerID string) tea.Cmd {
 	return func() tea.Msg {
-		err := dockerAction(action, containerID)
+		err := docker.DoAction(action, containerID)
 		return actionDoneMsg{err: err}
 	}
 }
@@ -223,8 +223,8 @@ func doAction(action, containerID string) tea.Cmd {
 // fetch logs for a container
 func fetchLogsCmd(id string) tea.Cmd {
 	return func() tea.Msg {
-		lines, err := GetLogs(id)
-		return logsMsg{id: id, lines: lines, err: err}
+		lines, err := docker.GetLogs(id)
+		return docker.LogsMsg{ID: id, Lines: lines, Err: err}
 	}
 }
 
@@ -398,13 +398,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = msg.Height
 		return m, nil
 
-	case containersMsg:
+	case docker.ContainersMsg:
 		// got container list
 		m.loading = false
-		if msg.err != nil {
-			m.err = msg.err
+		if msg.Err != nil {
+			m.err = msg.Err
 		} else {
-			m.containers = msg.containers
+			m.containers = msg.Containers
 			m.err = nil
 			// sort with current settings
 			m.sortContainers()
@@ -448,15 +448,15 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
-	case logsMsg:
+	case docker.LogsMsg:
 		// got logs
-		if msg.err != nil {
-			m.message = fmt.Sprintf("Logs error: %v", msg.err)
+		if msg.Err != nil {
+			m.message = fmt.Sprintf("Logs error: %v", msg.Err)
 			m.logsLines = nil
 			m.showLogs = false
 		} else {
-			m.logsLines = msg.lines
-			m.logsContainer = msg.id
+			m.logsLines = msg.Lines
+			m.logsContainer = msg.ID
 			m.showLogs = true
 		}
 		return m, nil
@@ -561,11 +561,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		// Handle key bindings
 		switch {
-		case key.Matches(msg, keys.Quit):
+		case key.Matches(msg, Keys.Quit):
 			// Exit application
 			return m, tea.Quit
 
-		case key.Matches(msg, keys.Up):
+		case key.Matches(msg, Keys.Up):
 			// Move cursor up (only in row mode)
 			if !m.columnMode && m.cursor > 0 {
 				m.cursor--
@@ -575,7 +575,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 
-		case key.Matches(msg, keys.Down):
+		case key.Matches(msg, Keys.Down):
 			// Move cursor down (only in row mode)
 			if !m.columnMode && m.cursor < len(m.containers)-1 {
 				m.cursor++
@@ -585,7 +585,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 
-		case key.Matches(msg, keys.PageUp):
+		case key.Matches(msg, Keys.PageUp):
 			// Go to previous page
 			if m.page > 0 {
 				m.page--
@@ -594,7 +594,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 
-		case key.Matches(msg, keys.PageDown):
+		case key.Matches(msg, Keys.PageDown):
 			// Go to next page
 			if m.pageSize == 0 {
 				m.pageSize = 5 // fallback minimum
@@ -608,27 +608,27 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.cursor = m.page * m.pageSize
 			}
 
-		case key.Matches(msg, keys.Refresh):
+		case key.Matches(msg, Keys.Refresh):
 			// Manually refresh container list
 			m.loading = true
 			m.showLogs = false
 			return m, fetchContainers()
 
-		case key.Matches(msg, keys.Start):
+		case key.Matches(msg, Keys.Start):
 			// Start selected container
 			if len(m.containers) > 0 {
 				m.message = "Starting container..."
 				return m, doAction("start", m.containers[m.cursor].ID)
 			}
 
-		case key.Matches(msg, keys.Stop):
+		case key.Matches(msg, Keys.Stop):
 			// Stop selected container
 			if len(m.containers) > 0 {
 				m.message = "Stopping container..."
 				return m, doAction("stop", m.containers[m.cursor].ID)
 			}
 
-		case key.Matches(msg, keys.Logs):
+		case key.Matches(msg, Keys.Logs):
 			// Fetch and display logs for selected container
 			if len(m.containers) == 0 {
 				return m, nil
@@ -636,7 +636,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.message = "Fetching logs..."
 			return m, fetchLogsCmd(m.containers[m.cursor].ID)
 
-		case key.Matches(msg, keys.Exec):
+		case key.Matches(msg, Keys.Exec):
 			// Open interactive shell in selected container (only if running)
 			if len(m.containers) > 0 && m.containers[m.cursor].State == "running" {
 				containerID := m.containers[m.cursor].ID
@@ -652,14 +652,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				})
 			}
 
-		case key.Matches(msg, keys.Restart):
+		case key.Matches(msg, Keys.Restart):
 			// Restart selected container
 			if len(m.containers) > 0 {
 				m.message = "Restarting container..."
 				return m, doAction("restart", m.containers[m.cursor].ID)
 			}
 
-		case key.Matches(msg, keys.Remove):
+		case key.Matches(msg, Keys.Remove):
 			// Remove selected container
 			if len(m.containers) > 0 {
 				m.message = "Removing container..."
@@ -1150,7 +1150,7 @@ func truncateToWidth(s string, width int) string {
 
 // render one container row
 // applies styles based on selection and state
-func (m model) renderContainerRow(c Container, selected bool, idW, nameW, memoryW, cpuW, netIOW, blockIOW, imageW, statusW, stateW, pidsW, totalWidth int) string {
+func (m model) renderContainerRow(c docker.Container, selected bool, idW, nameW, memoryW, cpuW, netIOW, blockIOW, imageW, statusW, stateW, pidsW, totalWidth int) string {
 	// get name from names array
 	name := ""
 	if len(c.Names) > 0 {
