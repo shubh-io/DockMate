@@ -150,6 +150,7 @@ const (
 	sortByMemory
 	sortByCPU
 	sortByNetIO
+	sortByBlockIO
 	sortByImage
 	sortByStatus
 	sortByState
@@ -166,7 +167,7 @@ func InitialModel() model {
 		loading:        true,        // start loading
 		startTime:      time.Now(),  // track uptime
 		page:           0,           // first page
-		pageSize:       0,           // calculated dynamically
+		pageSize:       12,          // 15 containers per page
 		showLogs:       false,       // logs hidden
 		sortBy:         sortByState, // sort by state
 		sortAsc:        false,       // descending
@@ -288,6 +289,12 @@ func (m *model) sortContainers() {
 			netI := parseNetIO(m.containers[i].NetIO)
 			netJ := parseNetIO(m.containers[j].NetIO)
 			less = netI < netJ
+
+		case sortByBlockIO:
+			// compare total block I/O (read+write) as bytes
+			blockI := parseNetIO(m.containers[i].BlockIO)
+			blockJ := parseNetIO(m.containers[j].BlockIO)
+			less = blockI < blockJ
 
 		}
 
@@ -430,7 +437,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if availableRows < 3 {
 			availableRows = 3
 		}
-		m.pageSize = availableRows
+		// Use fixed page size of 15 containers per page
+		// but if screen has less space, use available space
+		if availableRows < 12 {
+			m.pageSize = availableRows
+		} else {
+			m.pageSize = 12
+		}
 		if m.pageSize < 5 {
 			m.pageSize = 5
 		}
@@ -485,6 +498,15 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		// special keys that work in both modes
 		switch msg.String() {
+		// for de bugging
+		// case "`": // backtick key just as example
+		// 	debugLogger.Printf(
+		// 		"STATE SNAPSHOT: width=%d height=%d page=%d cursor=%d pageSize=%d selectedColumn=%d",
+		// 		m.width, m.height, m.page, m.cursor, m.pageSize, m.selectedColumn,
+		// 	)
+		// 	m.message = "Dumped debug snapshot to dockmate-debug.log"
+		// 	return m, nil
+
 		case "tab":
 			// toggle column/row mode
 			m.columnMode = !m.columnMode
@@ -500,6 +522,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.columnMode {
 				// map column index to sort enum
 				var col sortColumn
+				var canSort bool = true
 				switch m.selectedColumn {
 				case 0:
 					col = sortByID
@@ -512,31 +535,35 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				case 4:
 					col = sortByNetIO
 				case 5:
-					col = sortByImage
+					col = sortByBlockIO
 				case 6:
-					col = sortByStatus
+					col = sortByImage
 				case 7:
-					col = sortByState
+					col = sortByStatus
 				case 8:
+					col = sortByState
+				case 9:
 					col = sortByPIDs
 				}
 
-				// toggle direction if same column, else reset
-				if m.sortBy == col {
-					m.sortAsc = !m.sortAsc
-				} else {
-					m.sortBy = col
-					m.sortAsc = true
-				}
-				m.sortContainers()
+				if canSort {
+					// toggle direction if same column, else reset
+					if m.sortBy == col {
+						m.sortAsc = !m.sortAsc
+					} else {
+						m.sortBy = col
+						m.sortAsc = true
+					}
+					m.sortContainers()
 
-				// show feedback
-				dir := "asc"
-				if !m.sortAsc {
-					dir = "desc"
+					// show feedback
+					dir := "asc"
+					if !m.sortAsc {
+						dir = "desc"
+					}
+					colNames := []string{"ID", "Name", "Memory", "CPU", "NET I/O", "Disk I/O", "Image", "Status", "State", "PIDs"}
+					m.message = fmt.Sprintf("Sorted by %s (%s)", colNames[m.selectedColumn], dir)
 				}
-				colNames := []string{"ID", "Name", "Memory", "CPU", "NET I/O", "Image", "Status", "State", "PIDs"}
-				m.message = fmt.Sprintf("Sorted by %s (%s)", colNames[m.selectedColumn], dir)
 			}
 			return m, nil
 
@@ -552,7 +579,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "right", "l":
 			// In column mode, move selection right
 			if m.columnMode {
-				if m.selectedColumn < 8 { // 0-8 for 9 columns
+				if m.selectedColumn < 9 { // 0-9 for 10 columns
 					m.selectedColumn++
 				}
 				return m, nil
@@ -586,19 +613,21 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 
 		case key.Matches(msg, Keys.PageUp):
-			// Go to previous page
+			// Go to previous page (left arrow)
 			if m.page > 0 {
 				m.page--
 				if m.pageSize > 0 {
 					m.cursor = m.page * m.pageSize
 				}
 			}
+			maxPage := (len(m.containers) - 1) / m.pageSize
+			if maxPage < 0 {
+				maxPage = 0
+			}
+			m.message = fmt.Sprintf("Page %d/%d", m.page+1, maxPage+1)
 
 		case key.Matches(msg, Keys.PageDown):
-			// Go to next page
-			if m.pageSize == 0 {
-				m.pageSize = 5 // fallback minimum
-			}
+			// Go to next page (right arrow)
 			maxPage := (len(m.containers) - 1) / m.pageSize
 			if maxPage < 0 {
 				maxPage = 0
@@ -607,6 +636,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.page++
 				m.cursor = m.page * m.pageSize
 			}
+			m.message = fmt.Sprintf("Page %d/%d", m.page+1, maxPage+1)
 
 		case key.Matches(msg, Keys.Refresh):
 			// Manually refresh container list
@@ -716,7 +746,7 @@ func (m model) View() string {
 	// table header
 
 	// column widths - compute with smart allocation to prevent overflow
-	usableWidth := width - 15 // account for padding and separators (10 columns = ~10 separators)
+	usableWidth := width - 2 // account for padding and separators (10 columns = ~10 separators)
 
 	// define minimum widths and relative weights for each column
 	type colSpec struct {
@@ -728,13 +758,13 @@ func (m model) View() string {
 		{12, 12}, // ID
 		{15, 15}, // NAME
 		{8, 8},   // MEMORY
-		{6, 6},   // CPU
-		{10, 10}, // NET I/O
-		{15, 15}, // Disk I/O
+		{6, 8},   // CPU
+		{10, 13}, // NET I/O
+		{12, 13}, // Disk I/O
 		{15, 18}, // IMAGE
 		{12, 12}, // STATUS
-		{8, 8},   // STATE
-		{5, 6},   // PIDs
+		{7, 13},  // STATE
+		{5, 10},  // PIDs
 	}
 
 	// compute total weight
@@ -754,39 +784,24 @@ func (m model) View() string {
 	}
 
 	// if we exceeded usableWidth, shrink columns proportionally (keeping minimums)
-	if allocated > usableWidth {
-		excess := allocated - usableWidth
-		// calculate how much slack each column has
-		totalSlack := 0
-		for i, spec := range specs {
-			slack := widths[i] - spec.min
-			if slack > 0 {
-				totalSlack += slack
-			}
-		}
+	if allocated < usableWidth {
+		remaining := usableWidth - allocated
+		// spread remaining 1 char at a time across columns with the biggest weight
 
-		if totalSlack > 0 {
-			// reduce each column proportionally to its slack
-			for i, spec := range specs {
-				slack := widths[i] - spec.min
-				if slack > 0 {
-					reduce := (slack * excess) / totalSlack
-					widths[i] -= reduce
-				}
-			}
-		} else {
-			// fallback: all at minimums already, force fit by reducing each slightly
-			reduction := excess / len(specs)
-			remainder := excess % len(specs)
+		for remaining > 0 {
 			for i := range widths {
-				widths[i] = max(specs[i].min-1, widths[i]-reduction)
-				if remainder > 0 && widths[i] > specs[i].min-1 {
-					widths[i]--
-					remainder--
+				if remaining == 0 {
+					break
 				}
+				widths[i]++
+				remaining--
 			}
 		}
 	}
+	// debugLogger.Printf(
+	// 	"width=%d usableWidth=%d allocated=%d widths=%v specs=%+v",
+	// 	width, usableWidth, allocated, widths, specs,
+	// )
 
 	// assign to individual variables
 	idW := widths[0]
@@ -800,57 +815,86 @@ func (m model) View() string {
 	stateW := widths[8]
 	pidsW := widths[9]
 
+	// debugLogger.Printf(
+	// 	"Column widths: ID=%d NAME=%d MEMORY=%d CPU=%d NET I/O=%d Disk I/O=%d IMAGE=%d STATUS=%d STATE=%d PIDs=%d",
+	// 	idW, nameW, memoryW, cpuW, netIOW, blockIOW, imageW, statusW, stateW, pidsW,
+	// )
 	// sort indicator (▲/▼)
 	sortIndicator := func(col sortColumn) string {
 		if m.sortBy == col {
 			if m.sortAsc {
-				return "▲"
+				return " ▲"
 			}
-			return "▼"
+			return " ▼"
 		}
 		return ""
 	}
 
 	// highlight selected column in column mode
-	highlightStyle := lipgloss.NewStyle().Background(lipgloss.Color("#4f46e5")).Foreground(lipgloss.Color("#ffffff"))
+	highlightStyle := lipgloss.NewStyle().Background(lipgloss.Color("#58cdffff")).Foreground(lipgloss.Color("#000000")).Bold(true)
 
-	// buildColumn pads text first, THEN applies style
-	// this prevents ansi codes from messing up width
+	// buildColumn builds a complete cell with spacing, padding, and title
 	buildColumn := func(colIdx int, title string, width int, indicator string) string {
 		text := title + indicator
-		// pad to width (before adding ansi codes)
-		if len(text) < width-1 {
-			text += strings.Repeat(" ", width-1-len(text))
+		// Pad to width (width includes the space before the column)
+		paddingNeeded := width - len(text)
+		if paddingNeeded > 0 {
+			text += strings.Repeat(" ", paddingNeeded)
 		}
-		// then apply highlight if selected
+		// Add leading space and apply style
+		cell := " " + text
 		if m.columnMode && m.selectedColumn == colIdx {
-			return highlightStyle.Render(text)
+			return highlightStyle.Render(cell)
 		}
-		return text
+		return headerStyle.Render(cell)
 	}
 
-	// build all 10 columns (added NET I/O)
-	col0 := buildColumn(0, "CONTAINER ID", idW, sortIndicator(sortByID))
-	col1 := buildColumn(1, "NAME", nameW, sortIndicator(sortByName))
-	col2 := buildColumn(2, "MEMORY", memoryW, sortIndicator(sortByMemory))
-	col3 := buildColumn(3, "CPU", cpuW, sortIndicator(sortByCPU))
-	col4 := buildColumn(4, "NET I/O", netIOW, sortIndicator(sortByNetIO))
-	col5 := buildColumn(5, "Disk I/O", blockIOW, "") // no sort for Disk I/O
-	col6 := buildColumn(6, "IMAGE", imageW, sortIndicator(sortByImage))
-	col7 := buildColumn(7, "STATUS", statusW, sortIndicator(sortByStatus))
-	col8 := buildColumn(8, "STATE", stateW, sortIndicator(sortByState))
-	col9 := buildColumn(9, "PIDs", pidsW, sortIndicator(sortByPIDs))
+	// build all 10 columns
+	col0 := buildColumn(0, "CONTAINER ID", idW-1, sortIndicator(sortByID))
+	col1 := buildColumn(1, "NAME", nameW-1, sortIndicator(sortByName))
+	col2 := buildColumn(2, "MEMORY", memoryW-1, sortIndicator(sortByMemory))
+	col3 := buildColumn(3, "CPU", cpuW-1, sortIndicator(sortByCPU))
+	col4 := buildColumn(4, "NET I/O", netIOW-1, sortIndicator(sortByNetIO))
+	col5 := buildColumn(5, "Disk I/O", blockIOW-1, sortIndicator(sortByBlockIO))
+	col6 := buildColumn(6, "IMAGE", imageW-1, sortIndicator(sortByImage))
+	col7 := buildColumn(7, "STATUS", statusW-1, sortIndicator(sortByStatus))
+	col8 := buildColumn(8, "STATE", stateW-1, sortIndicator(sortByState))
+	col9 := buildColumn(9, "PIDs", pidsW, sortIndicator(sortByPIDs)) // last column gets full width
 
-	// combine into header
-	hdr := fmt.Sprintf(" %s│ %s│ %s│ %s│ %s│ %s│ %s│ %s│ %s│ %s",
-		col0, col1, col2, col3, col4, col5, col6, col7, col8, col9)
-	// pad header
-	if len(hdr) < width {
-		hdr += strings.Repeat(" ", width-len(hdr))
+	// combine into header - separators only
+	sepStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#000000")).
+		Background(meterGreen)
+	sep := sepStyle.Render("│")
+
+	var hdrBuilder strings.Builder
+	hdrBuilder.WriteString(col0)
+	hdrBuilder.WriteString(sep)
+	hdrBuilder.WriteString(col1)
+	hdrBuilder.WriteString(sep)
+	hdrBuilder.WriteString(col2)
+	hdrBuilder.WriteString(sep)
+	hdrBuilder.WriteString(col3)
+	hdrBuilder.WriteString(sep)
+	hdrBuilder.WriteString(col4)
+	hdrBuilder.WriteString(sep)
+	hdrBuilder.WriteString(col5)
+	hdrBuilder.WriteString(sep)
+	hdrBuilder.WriteString(col6)
+	hdrBuilder.WriteString(sep)
+	hdrBuilder.WriteString(col7)
+	hdrBuilder.WriteString(sep)
+	hdrBuilder.WriteString(col8)
+	hdrBuilder.WriteString(sep)
+	hdrBuilder.WriteString(col9)
+
+	hdr := hdrBuilder.String()
+	// pad header to fill width
+	if visibleLen(hdr) < width {
+		hdr += headerStyle.Render(strings.Repeat(" ", width-visibleLen(hdr)))
 	}
-	b.WriteString(headerStyle.Render(hdr))
+	b.WriteString(hdr)
 	b.WriteString("\n")
-
 	// container list (paginated)
 
 	// figure out how many rows we can show
@@ -863,11 +907,11 @@ func (m model) View() string {
 	if m.showLogs {
 		// adapt logs panel size to screen height
 		if m.height < 30 {
-			logsRows = 12 // smaller on tiny screens
+			logsRows = 11 // smaller on tiny screens
 		} else if m.height < 40 {
-			logsRows = 15
+			logsRows = 14
 		} else {
-			logsRows = 18
+			logsRows = 17
 		}
 	}
 	containerRowsAvailable := m.height - headerRows - footerRows - logsRows - 1
@@ -1164,19 +1208,19 @@ func (m model) renderContainerRow(c docker.Container, selected bool, idW, nameW,
 	}
 
 	if len(name) > nameW-2 {
-		name = name[:nameW-5] + "…"
+		name = name[:nameW-3] + "…"
 	}
 	img := c.Image
 	if len(img) > imageW-2 {
-		img = img[:imageW-5] + "…"
+		img = img[:imageW-3] + "…"
 	}
 	status := c.Status
 	if len(status) > statusW-2 {
-		status = status[:statusW-5] + "…"
+		status = status[:statusW-3] + "…"
 	}
 	state := c.State
 	if len(state) > stateW-2 {
-		state = state[:stateW-2]
+		state = state[:stateW-2] + "…"
 	}
 
 	// net IO
@@ -1233,7 +1277,7 @@ func (m model) renderContainerRow(c docker.Container, selected bool, idW, nameW,
 		blockIOW-1, blockio,
 		imageW-1, img,
 		statusW-1, status,
-		stateW-1, state,
+		stateW-3, state,
 		pidsW, pids)
 
 	// pad to width
@@ -1266,7 +1310,7 @@ func (m model) renderFooter(width int) string {
 	}{
 		{"Tab", "Col Mode"},
 		{"↑↓", "Rows"},
-		{"←→", "Cols"},
+		{"←→", "Cols / Navigate"},
 		{"Enter", "Sort"},
 		{"s", "Start"},
 		{"x", "Stop"},
