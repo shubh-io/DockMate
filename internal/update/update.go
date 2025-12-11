@@ -92,7 +92,7 @@ func UpdateCommand() {
 	fmt.Println("Checking for updates...")
 
 	// Ensure we have the current version constant available
-	current := version.Version
+	current := version.Dockmate_Version
 
 	latestTag, err := getLatestReleaseTag(version.Repo)
 	if err != nil {
