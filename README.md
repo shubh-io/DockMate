@@ -93,7 +93,7 @@ sudo mv dockmate /usr/local/bin/
 
 **Homebrew:**
 ```
-brew upgrade dockmate
+brew upgrade shubh-io/tap/dockmate
 ```
 
 **Built-in updater:**
