@@ -108,32 +108,6 @@ curl -fsSL https://raw.githubusercontent.com/shubh-io/DockMate/main/install.sh |
 
 ---
 
-## Verifying downloads (optional)
-
-Release binaries are published with matching SHA256 checksum files.
-
-Example for verifying a release:
-
-```
-# Download binary and checksum
-curl -fsSL -o dockmate-linux-amd64 \
-  https://github.com/shubh-io/DockMate/releases/download/v0.0.5/dockmate-linux-amd64
-
-curl -fsSL -o dockmate-linux-amd64.sha256 \
-  https://github.com/shubh-io/DockMate/releases/download/v0.0.5/dockmate-linux-amd64.sha256
-
-# Verify on Linux
-sha256sum -c dockmate-linux-amd64.sha256
-
-# Or on macOS
-shasum -a 256 -c dockmate-linux-amd64.sha256
-```
-
-The installer script will also try to fetch and verify the corresponding `.sha256` file automatically.  
-If verification fails, installation is aborted.
-
----
-
 ## Usage
 
 ```
@@ -141,6 +115,15 @@ dockmate
 ```
 
 Use the keyboard to navigate and control containers.
+
+**Check installed version:**
+```
+dockmate version
+# or
+dockmate -v
+# or
+dockmate --version
+```
 
 ---
 
@@ -162,6 +145,32 @@ Use the keyboard to navigate and control containers.
 
 ---
 
+## Verifying downloads (optional)
+
+Release binaries are published with matching SHA256 checksum files.
+
+Example for verifying a release:
+
+```
+# Download binary and checksum
+curl -fsSL -o dockmate-linux-amd64 \
+  https://github.com/shubh-io/DockMate/releases/download/v0.0.7/dockmate-linux-amd64
+
+curl -fsSL -o dockmate-linux-amd64.sha256 \
+  https://github.com/shubh-io/DockMate/releases/download/v0.0.7/dockmate-linux-amd64.sha256
+
+# Verify on Linux
+sha256sum -c dockmate-linux-amd64.sha256
+
+# Or on macOS
+shasum -a 256 -c dockmate-linux-amd64.sha256
+```
+
+The installer script will also try to fetch and verify the corresponding `.sha256` file automatically.  
+If verification fails, installation is aborted.
+
+---
+
 ## Why DockMate?
 
 Most Docker TUIs either try to do too much or require config and setup.  
@@ -169,7 +178,7 @@ DockMate aims to be:
 
 - Lightweight
 - Zero-config
-- "Install and go" for day-to-day container work
+- "Install and go" for daily container management work
 
 ---
 

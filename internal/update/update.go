@@ -1,7 +1,10 @@
 package update
 
 import (
+	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
 	"os/exec"
 	"strconv"
@@ -10,20 +13,93 @@ import (
 	"github.com/shubh-io/dockmate/pkg/version"
 )
 
+// Check if dockmate is installed via Homebrew
+func isHomebrewInstall() bool {
+	// First, check if brew exists and whether dockmate is registered under brew
+	if _, err := exec.LookPath("brew"); err == nil {
+		// Prefer explicit tap name; fallback to plain formula name
+		if err := exec.Command("brew", "list", "--versions", "shubh-io/tap/dockmate").Run(); err == nil {
+			return true
+		}
+		if err := exec.Command("brew", "list", "--versions", "dockmate").Run(); err == nil {
+			return true
+		}
+		// Fallback: compare executable path to brew prefix
+		exe, err := os.Executable()
+		if err == nil {
+			prefixOut, pErr := exec.Command("brew", "--prefix").Output()
+			if pErr == nil {
+				prefix := strings.TrimSpace(string(prefixOut))
+				exeLower := strings.ToLower(exe)
+				// Common brew locations
+				if strings.HasPrefix(exeLower, strings.ToLower(prefix)) ||
+					strings.Contains(exeLower, "/cellar/dockmate") ||
+					strings.Contains(exeLower, "/opt/homebrew") ||
+					strings.Contains(exeLower, "/usr/local/cellar") ||
+					strings.Contains(exeLower, ".linuxbrew") ||
+					strings.Contains(exeLower, "/home/linuxbrew") {
+					return true
+				}
+			}
+		}
+	}
+
+	// As a last resort, path heuristics without brew available
+	exe, err := os.Executable()
+	if err != nil {
+		return false
+	}
+	exePath := strings.ToLower(exe)
+	homebrewHints := []string{
+		"/linuxbrew/",
+		"/home/linuxbrew/",
+		"/homebrew/",
+		"/opt/homebrew/",
+		"/usr/local/cellar/",
+		"cellar/dockmate",
+		".linuxbrew",
+	}
+	for _, h := range homebrewHints {
+		if strings.Contains(exePath, strings.ToLower(h)) {
+			return true
+		}
+	}
+	return false
+}
+
 // getLatestReleaseTag fetches the latest release tag name from GitHub for the given repo (owner/repo)
 // This uses a small shell pipeline to keep the implementation compact
 func getLatestReleaseTag(repo string) (string, error) {
-	// build the shell command; use the compact pipeline suggested by the user
-	cmd := fmt.Sprintf("curl -s https://api.github.com/repos/%s/releases/latest | grep '\"tag_name\":' | sed -E 's/.*\"([^\"]+)\".*/\\1/'", repo)
-	out, err := exec.Command("bash", "-c", cmd).Output()
+	url := fmt.Sprintf("https://api.github.com/repos/%s/releases/latest", repo)
+
+	resp, err := http.Get(url)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("failed to fetch release info: %w", err)
 	}
-	tag := strings.TrimSpace(string(out))
-	if tag == "" {
-		return "", fmt.Errorf("empty tag from GitHub for %s", repo)
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("GitHub API returned status %d", resp.StatusCode)
 	}
-	return tag, nil
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("failed to read response: %w", err)
+	}
+
+	var release struct {
+		TagName string `json:"tag_name"`
+	}
+
+	if err := json.Unmarshal(body, &release); err != nil {
+		return "", fmt.Errorf("failed to parse JSON: %w", err)
+	}
+
+	if strings.TrimSpace(release.TagName) == "" {
+		return "", fmt.Errorf("no tag name found in release")
+	}
+
+	return release.TagName, nil
 }
 
 // trims whitespace and leading 'v' or 'V'
@@ -91,6 +167,17 @@ func compareSemver(a, b string) int {
 func UpdateCommand() {
 	fmt.Println("Checking for updates...")
 
+	// Check if installed via Homebrew FIRST
+	if isHomebrewInstall() {
+		fmt.Println("⚠️ Detected: dockmate is installed via Homebrew")
+		fmt.Println("")
+		fmt.Println("To update, please run:")
+		fmt.Println("  brew upgrade shubh-io/tap/dockmate")
+		fmt.Println("")
+		fmt.Println("Current version:", version.Dockmate_Version)
+		return
+	}
+
 	// Ensure we have the current version constant available
 	current := version.Dockmate_Version
 
@@ -107,7 +194,7 @@ func UpdateCommand() {
 		return
 	}
 
-	fmt.Printf("New release available: %s → %s\n", current, latestTag)
+	fmt.Printf("New release available! : %s → %s\n", current, latestTag)
 	fmt.Println("Re-running installer to update...")
 
 	// Try piped install first
@@ -141,5 +228,8 @@ func UpdateCommand() {
 		}
 	}
 
+	fmt.Println("")
 	fmt.Println("Updated successfully!")
+	fmt.Println("Please Run 'dockmate version' to verify")
+	fmt.Println("⚠️ Note: You may need to run 'hash -r' if version doesn't update")
 }
