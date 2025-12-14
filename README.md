@@ -186,6 +186,7 @@ DockMate aims to be:
 
 - [ ] Docker Compose integration  
 - [ ] Container search / filter  
+- [ ] Resource monitoring alerts & notifications
 - [ ] Image management
 - [x] Homebrew distribution
 - [x] macOS support
