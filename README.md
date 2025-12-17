@@ -37,19 +37,22 @@ Think of `htop`, but for Docker.
 
 | Feature | DockMate | LazyDocker |
 |---------|----------|------------|
-| **Installation** | One-command install | Manual binary/brew |
-| **Auto-update** | ✅ Built-in (`dockmate update`) | ❌ Manual |
-| **Container loading speed** | ~2 seconds | Variable |
-| **Real-time stats** | ✅ CPU, memory, network, disk I/O | ✅ + graphs |
+| **Installation** | One-command + Homebrew | Homebrew + Multiple package managers |
+| **Auto-update** | ✅ Built-in (`dockmate update`) | ❌ Manual updates required |
+| **Container loading** | ✅ **Fast (2 seconds)** | Slower (variable) |
+| **UI Framework** | ✅ **Bubble Tea (new)** | gocui (older library) |
+| **Dependencies** | ✅ **Minimal** (bash, curl) | Multiple system dependencies |
+| **Container stats** | ✅ Real-time (CPU, memory, network, disk I/O) | Real-time + ASCII graphs |
 | **Interactive logs** | ✅ | ✅ |
 | **Shell access** | ✅ One keypress | ✅ |
-| **Docker Compose support** | ❌ (planned) | ✅ |
-| **Image management** | ❌ | ✅ Layer inspection |
-| **Mouse support** | ❌ Keyboard-only | ✅ |
-| **Metrics visualization** | ❌ Text-based | ✅ Graphs |
-| **Dependencies** | Minimal (bash, curl) | More complex |
-| **Learning curve** | Low | Medium |
-| **Best for** | Quick monitoring & simple management | Feature-rich power users |
+| **Docker Compose** | ⏳ Planned | ✅ |
+| **Image management** | ⏳ Planned | ✅ Layer inspection & pruning |
+| **Metrics graphs** | ❌ Text-based (lighter) | ✅ Customizable ASCII graphs |
+| **Mouse support** | ❌ Keyboard-focused | ✅ |
+| **Resource usage** | ✅ **Lightweight** | Heavier footprint |
+| **Best for** | Speed, simplicity, modern workflows | Feature-rich power users |
+
+
 
 </div>
 
@@ -67,7 +70,7 @@ Think of `htop`, but for Docker.
 - ✅ You want metrics graphs and visualizations
 - ✅ You need image layer inspection
 - ✅ You prefer mouse support
-- ✅ You want a mature, battle-tested tool
+- ✅ You want a mature tool
 
 
 **Both are great tools - choose based on your workflow!** 🐳
