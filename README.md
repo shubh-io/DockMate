@@ -107,8 +107,6 @@ DockMate uses the following system tools:
 
 - **curl** - For one-command installation
 
-**Non-systemd systems:** Service check will be skipped on systems without systemd (OpenRC, runit, etc). Container management still works.
-
 **macOS:** systemctl checks are automatically skipped.
 
 
