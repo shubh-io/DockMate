@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"os/user"
+	"runtime"
 	"strings"
 )
 
@@ -33,21 +35,119 @@ const (
 // PreCheck Functions
 // ============================================================================
 
+// commandExists checks if a command is available in PATH
+func commandExists(cmd string) bool {
+	_, err := exec.LookPath(cmd)
+	return err == nil
+}
+
+// getDockerStartCommand detects the init system and returns the appropriate command
+func getDockerStartCommand() string {
+	if runtime.GOOS == "darwin" {
+		return "Start Docker Desktop application"
+	}
+
+	// Check for different init systems
+	if commandExists("systemctl") {
+		return "sudo systemctl start docker"
+	}
+	if commandExists("rc-service") {
+		return "sudo rc-service docker start"
+	}
+	if commandExists("sv") {
+		return "sudo sv up docker"
+	}
+
+	// Fallback to generic service command
+	return "sudo service docker start"
+}
+
+// getDockerRestartCommand detects the init system and returns the restart command
+func getDockerRestartCommand() string {
+	if runtime.GOOS == "darwin" {
+		return "Restart Docker Desktop application"
+	}
+
+	// check for different init systems
+	if commandExists("systemctl") {
+		return "sudo systemctl restart docker"
+	}
+	if commandExists("rc-service") {
+		return "sudo rc-service docker restart"
+	}
+	if commandExists("sv") {
+		return "sudo sv restart docker"
+	}
+
+	// Fallback
+	return "sudo service docker restart"
+}
+
 // checks if the 'docker' group exists on the system and anchor before docker to help find group that 'starts with' docker
+// On macOS, Docker Desktop doesn't use groups, so this always returns false
 func doesDockerGroupExist() bool {
+	if runtime.GOOS == "darwin" {
+		return false
+	}
+
+	// check /etc/group on Linux/Unix systems
+	if !commandExists("grep") {
+		// fallback - check if group file exists and contains docker
+		data, err := os.ReadFile("/etc/group")
+		if err != nil {
+			return false
+		}
+		return strings.Contains(string(data), "\ndocker:") || strings.HasPrefix(string(data), "docker:")
+	}
+
 	cmd := exec.Command("grep", "^docker:", "/etc/group")
 	err := cmd.Run()
 	return err == nil
 }
 
 // checks if the current user is listed in the 'docker' group in /etc/group
+// On mac-os, Docker Desktop doesn't use groups, so this always returns false
 func isUserInDockerGroup() (bool, error) {
-	currentUser := os.Getenv("USER")
-	cmd := exec.Command("grep", "^docker:", "/etc/group")
-	output, err := cmd.Output()
+	if runtime.GOOS == "darwin" {
+		return false, nil
+	}
+
+	// get current user in a cross-platform way
+	currentUser, err := user.Current()
 	if err != nil {
 		return false, err
 	}
+	username := currentUser.Username
+
+	//reading /etc/group directly if grep is not available
+	var output []byte
+	if commandExists("grep") {
+		cmd := exec.Command("grep", "^docker:", "/etc/group")
+		output, err = cmd.Output()
+		if err != nil {
+			return false, err
+		}
+	} else {
+		// Fallback: read /etc/group and find docker line
+		data, err := os.ReadFile("/etc/group")
+		if err != nil {
+			return false, err
+		}
+		// split into lines and find docker line
+		lines := strings.Split(string(data), "\n")
+
+		for _, line := range lines {
+			// find the line that starts with 'docker:'
+			if strings.HasPrefix(line, "docker:") {
+				output = []byte(line)
+				break
+			}
+		}
+		if len(output) == 0 {
+			return false, nil
+		}
+	}
+
 	// output format: docker:x:999:user1,user2,..
 	line := string(output)
 	parts := strings.Split(line, ":")
@@ -63,7 +163,7 @@ func isUserInDockerGroup() (bool, error) {
 	// split users by comma and check for current user
 	users := strings.Split(usersInGroup, ",")
 	for _, user := range users {
-		if strings.TrimSpace(user) == currentUser {
+		if strings.TrimSpace(user) == username {
 			return true, nil
 		}
 	}
@@ -71,7 +171,17 @@ func isUserInDockerGroup() (bool, error) {
 }
 
 // checks if the 'docker' group is in the user's active groups (id -nG)
+// On macOS, Docker Desktop doesn't use groups, so this always returns false
 func isDockerInActiveGroups() (bool, error) {
+	if runtime.GOOS == "darwin" {
+		return false, nil
+	}
+
+	// Check if id command exists
+	if !commandExists("id") {
+		return false, nil
+	}
+
 	cmd := exec.Command("id", "-nG")
 	output, err := cmd.Output()
 	if err != nil {
@@ -88,6 +198,11 @@ func isDockerInActiveGroups() (bool, error) {
 }
 
 func checkDockerSocketPermissions() (hasAccess bool, errorMsg string) {
+	if runtime.GOOS == "darwin" {
+		// permissions are managed by Docker Desktop, so skip this check
+		return true, ""
+	}
+
 	socketPath := "/var/run/docker.sock"
 
 	// check if socket exists
@@ -146,9 +261,9 @@ func checkDockerDaemon() PreCheckResult {
 			Passed:       false,
 			ErrorType:    DockerDaemonNotRunning,
 			ErrorMessage: fmt.Sprintf("Docker daemon is not running.\n\nDocker error:\n%s", stderrOutput),
-			SuggestedAction: "Start the Docker service:\n\n" +
-				"  sudo systemctl start docker\n\n" +
-				"Troubleshooting: https://docs.docker.com/config/daemon/troubleshoot/",
+			SuggestedAction: fmt.Sprintf("Start the Docker service:\n\n"+
+				"  %s\n\n"+
+				"Troubleshooting: https://docs.docker.com/config/daemon/troubleshoot/", getDockerStartCommand()),
 		}
 	}
 
@@ -156,6 +271,22 @@ func checkDockerDaemon() PreCheckResult {
 	if strings.Contains(stderrOutput, "permission denied") ||
 		strings.Contains(stderrOutput, "dial unix") {
 
+		// macOS Docker Desktop handles permissions differently
+		if runtime.GOOS == "darwin" {
+			return PreCheckResult{
+				Passed:       false,
+				ErrorType:    DockerPermissionDenied,
+				ErrorMessage: fmt.Sprintf("Cannot connect to Docker Desktop.\n\nDocker error:\n%s", stderrOutput),
+				SuggestedAction: "Make sure Docker Desktop is running:\n\n" +
+					"1. Open Docker Desktop application\n" +
+					"2. Wait for it to start completely\n" +
+					"3. Check that the Docker icon in the menu bar shows it's running\n\n" +
+					"If issues persist, try restarting Docker Desktop.\n\n" +
+					"Docker Desktop guide: https://docs.docker.com/desktop/install/mac-install/",
+			}
+		}
+
+		// Linux/Unix permission handling
 		inGroupFile, _ := isUserInDockerGroup()
 		inActiveGroups, _ := isDockerInActiveGroups()
 
@@ -170,12 +301,12 @@ func checkDockerDaemon() PreCheckResult {
 				ErrorMessage: fmt.Sprintf("You're in the docker group, but the socket has incorrect permissions.\n\n"+
 					"Socket error: %s\n\n"+
 					"Docker error:\n%s", socketError, stderrOutput),
-				SuggestedAction: "Fix the Docker socket permissions:\n\n" +
-					"  sudo chown root:docker /var/run/docker.sock\n" +
-					"  sudo chmod 660 /var/run/docker.sock\n\n" +
-					"Or restart Docker to recreate the socket:\n\n" +
-					"  sudo systemctl restart docker\n\n" +
-					"Guide: https://docs.docker.com/engine/install/linux-postinstall/",
+				SuggestedAction: fmt.Sprintf("Fix the Docker socket permissions:\n\n"+
+					"  sudo chown root:docker /var/run/docker.sock\n"+
+					"  sudo chmod 660 /var/run/docker.sock\n\n"+
+					"Or restart Docker to recreate the socket:\n\n"+
+					"  %s\n\n"+
+					"Guide: https://docs.docker.com/engine/install/linux-postinstall/", getDockerRestartCommand()),
 			}
 		}
 
@@ -220,17 +351,17 @@ func checkDockerDaemon() PreCheckResult {
 		Passed:       false,
 		ErrorType:    DockerDaemonNotRunning,
 		ErrorMessage: fmt.Sprintf("Docker error:\n%s", stderrOutput),
-		SuggestedAction: "Check Docker installation and try:\n\n" +
-			"  sudo systemctl start docker\n\n" +
-			"Docker docs: https://docs.docker.com/",
+		SuggestedAction: fmt.Sprintf("Check Docker installation and try:\n\n"+
+			"  %s\n\n"+
+			"Docker docs: https://docs.docker.com/", getDockerStartCommand()),
 	}
 }
 
 // Helper function to check if daemon is actually running
 func isDaemonRunning() bool {
-	cmd := exec.Command("systemctl", "is-active", "docker")
-	output, _ := cmd.Output()
-	return strings.TrimSpace(string(output)) == "active"
+	cmd := exec.Command("docker", "info")
+	err := cmd.Run()
+	return err == nil
 }
 
 func RunPreChecks() PreCheckResult {

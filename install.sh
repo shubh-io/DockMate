@@ -1,5 +1,5 @@
-#!/bin/bash
-set -euo pipefail
+#!/bin/sh
+set -eu
 
 REPO="shubh-io/dockmate"
 BINARY_NAME="dockmate"
@@ -7,7 +7,7 @@ INSTALL_DIR="/usr/local/bin"
 
 # For Homebrew folks — robust detection
 # Check via brew metadata first, then path heuristics
-if command -v brew &>/dev/null; then
+if command -v brew >/dev/null 2>&1; then
     # Prefer explicit tap formula; fallback to plain name
     if brew list --versions shubh-io/tap/dockmate >/dev/null 2>&1 || brew list --versions dockmate >/dev/null 2>&1; then
         echo "⚠️  Detected: dockmate is installed via Homebrew"
@@ -21,26 +21,29 @@ if command -v brew &>/dev/null; then
         exit 0
     else
         # Fallback: compare executable path against Homebrew prefix
-        if command -v dockmate &>/dev/null; then
-            DOCKMATE_PATH=$(which dockmate)
+        if command -v dockmate >/dev/null 2>&1; then
+            DOCKMATE_PATH=$(command -v dockmate)
             BREW_PREFIX=$(brew --prefix 2>/dev/null || true)
-            if [[ -n "$BREW_PREFIX" ]]; then
+            if [ -n "$BREW_PREFIX" ]; then
                 # Common brew locations to match (Intel/macOS, Apple Silicon, Linuxbrew)
-                if [[ "$DOCKMATE_PATH" == "$BREW_PREFIX"* ]] || [[ "$DOCKMATE_PATH" == *"/Cellar/dockmate"* ]] || [[ "$DOCKMATE_PATH" == *"/opt/homebrew"* ]] || [[ "$DOCKMATE_PATH" == *"/usr/local/Cellar"* ]] || [[ "$DOCKMATE_PATH" == *".linuxbrew"* ]]; then
-                    echo "⚠️  Detected: dockmate appears to be installed under Homebrew prefix ($BREW_PREFIX)"
-                    echo ""
-                    echo "To update, please use:"
-                    echo "  brew upgrade shubh-io/tap/dockmate"
-                    echo ""
-                    echo "If you want to switch to script-based installation:"
-                    echo "  1. brew uninstall dockmate"
-                    echo "  2. Re-run this installer"
-                    exit 0
-                fi
+                case "$DOCKMATE_PATH" in
+                    "$BREW_PREFIX"*|*"/Cellar/dockmate"*|*"/opt/homebrew"*|*"/usr/local/Cellar"*|*".linuxbrew"*|*"/home/linuxbrew"*)
+                        echo "⚠️  Detected: dockmate appears to be installed under Homebrew prefix ($BREW_PREFIX)"
+                        echo ""
+                        echo "To update, please use:"
+                        echo "  brew upgrade shubh-io/tap/dockmate"
+                        echo ""
+                        echo "If you want to switch to script-based installation:"
+                        echo "  1. brew uninstall dockmate"
+                        echo "  2. Re-run this installer"
+                        exit 0
+                        ;;
+                esac
             fi
         fi
     fi
 fi
+
 # Better architecture detection
 ARCH=$(uname -m)
 case "$ARCH" in
@@ -54,6 +57,13 @@ echo "==> Preparing to install dockmate from GitHub releases..."
 # Better JSON parsing - fetch entire response first
 API_URL="https://api.github.com/repos/$REPO/releases/latest"
 echo "==> Checking GitHub for the latest release..."
+
+# Ensure curl is available
+if ! command -v curl >/dev/null 2>&1; then
+    echo "Error: curl is required but not installed"
+    echo "Please install curl and re-run this installer"
+    exit 1
+fi
 
 # Download the full API response to avoid pipe issues
 API_RESPONSE=$(curl -fsSL "$API_URL" 2>&1) || {
@@ -92,7 +102,7 @@ fi
 CHECKSUM_URL="https://github.com/$REPO/releases/download/$LATEST_TAG/$ASSET_NAME.sha256"
 if curl -fsSL -o "$TMP_BIN.sha256" "$CHECKSUM_URL" 2>/dev/null; then
     echo "==> Verifying checksum..."
-    cd $(dirname "$TMP_BIN")
+    cd "$(dirname "$TMP_BIN")"
     if sha256sum -c "$TMP_BIN.sha256" 2>/dev/null | grep -q OK; then
         echo "✔ Checksum verified"
     else

@@ -7,11 +7,56 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+
 	"strconv"
 	"strings"
 
 	"github.com/shubh-io/dockmate/pkg/version"
 )
+
+// commandExists checks if a command is available in PATH
+func commandExists(cmd string) bool {
+	_, err := exec.LookPath(cmd)
+	return err == nil
+}
+
+// downloadFile downloads a file from URL and saves it to the given path
+func downloadFile(url, filepath string) error {
+	resp, err := http.Get(url)
+	if err != nil {
+		return fmt.Errorf("failed to download: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("download failed with status: %d", resp.StatusCode)
+	}
+
+	out, err := os.Create(filepath)
+	if err != nil {
+		return fmt.Errorf("failed to create file: %w", err)
+	}
+	defer out.Close()
+
+	_, err = io.Copy(out, resp.Body)
+	if err != nil {
+		return fmt.Errorf("failed to write file: %w", err)
+	}
+
+	return nil
+}
+
+// getShellCommand returns the appropriate shell command
+func getShellCommand() (string, bool) {
+	if commandExists("bash") {
+		return "bash", true
+	}
+	if commandExists("sh") {
+		return "sh", true
+	}
+
+	return "", false
+}
 
 // Check if dockmate is installed via Homebrew
 func isHomebrewInstall() bool {
@@ -197,39 +242,71 @@ func UpdateCommand() {
 	fmt.Printf("New release available! : %s → %s\n", current, latestTag)
 	fmt.Println("Re-running installer to update...")
 
-	// Try piped install first
-	cmd := exec.Command("bash", "-c", "curl -fsSL https://raw.githubusercontent.com/shubh-io/dockmate/main/install.sh | bash")
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
+	// Check for required shell
+	shell, hasShell := getShellCommand()
+	if !hasShell {
+		fmt.Fprintln(os.Stderr, "Error: No compatible shell found (bash, sh)")
+		fmt.Fprintln(os.Stderr, "Please install bash or sh to use auto-update")
+		fmt.Printf("\nManual update: https://github.com/%s/releases/latest\n", version.Repo)
+		return
+	}
 
-	if err := cmd.Run(); err != nil {
-		fmt.Println("Piped install failed, trying fallback method...")
+	// define install script URL and local filename
+	installURL := "https://raw.githubusercontent.com/shubh-io/dockmate/main/install.sh"
+	installScript := "install.sh"
 
-		// Fallback- download script, run it, then delete it lol
-		downloadCmd := exec.Command("bash", "-c", "curl -fsSL https://raw.githubusercontent.com/shubh-io/dockmate/main/install.sh -o install.sh")
-		if err := downloadCmd.Run(); err != nil {
-			fmt.Printf("Failed to download install script: %v\n", err)
-			return
+	// Try piped install first (bash/sh only)
+	if shell == "bash" || shell == "sh" {
+		if commandExists("curl") {
+			cmd := exec.Command(shell, "-c", fmt.Sprintf("curl -fsSL %s | %s", installURL, shell))
+			cmd.Stdout = os.Stdout
+			cmd.Stderr = os.Stderr
+			if err := cmd.Run(); err == nil {
+				fmt.Println("")
+				fmt.Println("Updated successfully!")
+				return
+			}
+			fmt.Println("Piped install failed, trying fallback method...")
+		} else if commandExists("wget") {
+			cmd := exec.Command(shell, "-c", fmt.Sprintf("wget -qO- %s | %s", installURL, shell))
+			cmd.Stdout = os.Stdout
+			cmd.Stderr = os.Stderr
+			if err := cmd.Run(); err == nil {
+				fmt.Println("")
+				fmt.Println("Updated successfully!")
+
+				return
+			}
+			fmt.Println("Piped install failed, trying fallback method...")
 		}
+	}
 
-		runCmd := exec.Command("bash", "install.sh")
-		runCmd.Stdout = os.Stdout
-		runCmd.Stderr = os.Stderr
-		if err := runCmd.Run(); err != nil {
-			fmt.Printf("Update failed: %v\n", err)
-			// Still try to clean up
-			os.Remove("install.sh")
-			return
-		}
+	// Fallback- download script using Go's http client, then run it
+	fmt.Println("Downloading installer...")
+	if err := downloadFile(installURL, installScript); err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to download install script: %v\n", err)
+		fmt.Printf("\nPlease update manually: https://github.com/%s/releases/latest\n", version.Repo)
+		return
+	}
+	// run installer script
+	fmt.Println("Running installer...")
+	runCmd := exec.Command(shell, installScript)
+	runCmd.Stdout = os.Stdout
+	runCmd.Stderr = os.Stderr
 
-		// Clean up the script file
-		if err := os.Remove("install.sh"); err != nil {
-			fmt.Printf("Warning: could not remove install.sh: %v\n", err)
-		}
+	if err := runCmd.Run(); err != nil {
+		fmt.Fprintf(os.Stderr, "Update failed: %v\n", err)
+		fmt.Printf("\nPlease update manually: https://github.com/%s/releases/latest\n", version.Repo)
+		// Still try to clean up
+		os.Remove(installScript)
+		return
+	}
+
+	// removes the script file
+	if err := os.Remove(installScript); err != nil {
+		fmt.Printf("Warning: could not remove %s: %v\n", installScript, err)
 	}
 
 	fmt.Println("")
 	fmt.Println("Updated successfully!")
-	fmt.Println("Please Run 'dockmate version' to verify")
-	fmt.Println("⚠️ Note: You may need to run 'hash -r' if version doesn't update")
 }
