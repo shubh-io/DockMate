@@ -134,6 +134,16 @@ If that ever fails on your setup, use the two-step variant:
 curl -fsSL https://raw.githubusercontent.com/shubh-io/DockMate/main/install.sh -o install.sh
 sh install.sh
 ```
+---
+
+**Note:** Some shells cache executable locations. If `dockmate` isn't found immediately after
+installation, refresh your shell's command cache with:
+
+```
+hash -r
+```
+
+Or open a new terminal session.
 
 ### 🔨 Build from Source
 
@@ -277,3 +287,4 @@ MIT License – do pretty much whatever you want, just keep the license intact.
 
 Built by [@shubh-io](https://github.com/shubh-io) while learning Go and Docker.  
 If DockMate saves you some keystrokes, consider dropping a ⭐ on the repo.
+
