@@ -38,8 +38,16 @@ echo ""
 sleep 2
 
 # Prompt the user to confirm before proceeding (Enter = yes)
-printf "Proceed with installation? [Y/n]: "
-if ! read -r ANSWER; then
+# use /dev/tty to read user input when possible (avoids consuming piped script content)
+if [ -r /dev/tty ] && [ -w /dev/tty ]; then
+    printf "Proceed with installation? [Y/n]: "
+    if ! read -r ANSWER </dev/tty; then
+        ANSWER=""
+    fi
+    echo ""
+else
+    # For Non-interactive shell (e.g., piped script)
+    echo "Non-interactive shell detected; proceeding with installation..."
     ANSWER=""
 fi
 case "$ANSWER" in
@@ -50,7 +58,6 @@ case "$ANSWER" in
         exit 0
         ;;
 esac
-echo ""
 
 # For Homebrew folks — robust detection (check early to avoid unnecessary work)
 # Check via brew metadata first, then path heuristics
