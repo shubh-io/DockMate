@@ -105,8 +105,6 @@ Think of `htop`, but for Docker.
 
 DockMate uses the following system tools:
 
-- **bash** - Required for install script
-- **systemctl** - Used to check Docker service status (systemd-based systems)
 - **curl** - For one-command installation
 
 **Non-systemd systems:** Service check will be skipped on systems without systemd (OpenRC, runit, etc). Container management still works.
@@ -220,10 +218,10 @@ Example for verifying a release:
 ```
 # Download binary and checksum
 curl -fsSL -o dockmate-linux-amd64 \
-  https://github.com/shubh-io/DockMate/releases/download/v0.0.7/dockmate-linux-amd64
+  https://github.com/shubh-io/DockMate/releases/download/v0.0.8/dockmate-linux-amd64
 
 curl -fsSL -o dockmate-linux-amd64.sha256 \
-  https://github.com/shubh-io/DockMate/releases/download/v0.0.7/dockmate-linux-amd64.sha256
+  https://github.com/shubh-io/DockMate/releases/download/v0.0.8/dockmate-linux-amd64.sha256
 
 # Verify on Linux
 sha256sum -c dockmate-linux-amd64.sha256
