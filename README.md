@@ -125,14 +125,14 @@ Works on both **Linux** and **macOS**. Easiest way to install and update.
 ### 📦 Quick Install Script
 
 ```
-curl -fsSL https://raw.githubusercontent.com/shubh-io/DockMate/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/shubh-io/DockMate/main/install.sh | sh
 ```
 
 If that ever fails on your setup, use the two-step variant:
 
 ```
 curl -fsSL https://raw.githubusercontent.com/shubh-io/DockMate/main/install.sh -o install.sh
-bash install.sh
+sh install.sh
 ```
 
 ### 🔨 Build from Source
@@ -165,7 +165,7 @@ dockmate update
 
 **Or re-run the installer:**
 ```
-curl -fsSL https://raw.githubusercontent.com/shubh-io/DockMate/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/shubh-io/DockMate/main/install.sh | sh
 ```
 
 ---
