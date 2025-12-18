@@ -98,24 +98,33 @@ INSTALL_DIR="${INSTALL_DIR:-/usr/local/bin}"
 echo "Installation directory: $INSTALL_DIR"
 echo ""
 
-# Check if directory exists and is writable
-if [ -d "$INSTALL_DIR" ]; then
-    if [ -w "$INSTALL_DIR" ]; then
-        USE_SUDO=0
-    else
-        USE_SUDO=1
-    fi
+# Determine whether sudo is needed
+# 1) If running as root (id -u == 0) -> no sudo
+# 2) If INSTALL_DIR exists and is writable by current user -> no sudo
+# 3) If parent directory is writable (we can create INSTALL_DIR) -> no sudo
+# Otherwise -> sudo is required
+UID_VALUE=$(id -u 2>/dev/null || echo "")
+if [ "$UID_VALUE" = "0" ]; then
+    USE_SUDO=0
 else
-    # Directory doesn't exist - check if we can create it
-    PARENT_DIR=$(dirname "$INSTALL_DIR")
-    if [ -w "$PARENT_DIR" ]; then
-        USE_SUDO=0
+    if [ -d "$INSTALL_DIR" ]; then
+        if [ -w "$INSTALL_DIR" ]; then
+            USE_SUDO=0
+        else
+            USE_SUDO=1
+        fi
     else
-        USE_SUDO=1
+        # Directory doesn't exist - check if we can create it
+        PARENT_DIR=$(dirname "$INSTALL_DIR")
+        if [ -w "$PARENT_DIR" ]; then
+            USE_SUDO=0
+        else
+            USE_SUDO=1
+        fi
     fi
 fi
 
-# Check if sudo is available when needed
+# Check if sudo is available when actually needed
 if [ "$USE_SUDO" -eq 1 ]; then
     echo "ℹ️  Note: $INSTALL_DIR requires elevated privileges"
     echo "   This installer will use 'sudo' to:"
