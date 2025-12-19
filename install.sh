@@ -345,29 +345,62 @@ unset IFS
 
 echo "==> Installing $BINARY_NAME to $INSTALL_DIR..."
 
-# Use sudo only if needed
-if [ "$USE_SUDO" -eq 1 ]; then
-    echo "    Running: sudo cp $TMP_BIN $INSTALL_DIR/$BINARY_NAME"
-    echo "    Running: sudo chmod 755 $INSTALL_DIR/$BINARY_NAME"
-    sudo cp "$TMP_BIN" "$INSTALL_DIR/$BINARY_NAME" || {
-        echo "Error: Failed to install $BINARY_NAME to $INSTALL_DIR"
-        rm -f "$TMP_BIN"
-        exit 1
-    }
-    sudo chmod 755 "$INSTALL_DIR/$BINARY_NAME" || {
-        echo "Warning: Failed to set executable permissions"
-    }
+# Use sudo only if needed. Try to stop services/processes if target is busy.
+install_target="$INSTALL_DIR/$BINARY_NAME"
+do_install() {
+    src="$1"
+    dst="$2"
+    if [ "$USE_SUDO" -eq 1 ]; then
+        sudo cp "$src" "$dst"
+        sudo chmod 755 "$dst" || true
+    else
+        cp "$src" "$dst"
+        chmod 755 "$dst" || true
+    fi
+}
+
+try_install() {
+    do_install "$TMP_BIN" "$install_target" 2>/tmp/dockmate-install.err
+    return $?
+}
+
+# First attempt
+if try_install; then
     rm -f "$TMP_BIN"
 else
-    cp "$TMP_BIN" "$INSTALL_DIR/$BINARY_NAME" || {
-        echo "Error: Failed to install $BINARY_NAME to $INSTALL_DIR"
+    # If install failed, attempt to stop systemd service and kill running processes, then retry
+    echo "Install failed; attempting to stop running dockmate processes and retry..."
+    # kill any running processes by name
+    sudo pkill -f dockmate >/dev/null 2>&1 || true
+    sleep 1
+
+    if try_install; then
         rm -f "$TMP_BIN"
-        exit 1
-    }
-    chmod 755 "$INSTALL_DIR/$BINARY_NAME" || {
-        echo "Warning: Failed to set executable permissions"
-    }
-    rm -f "$TMP_BIN"
+    else
+        # final fallback: save the downloaded binary as .new and instruct user to reboot or manually replace
+        NEW_TARGET="$INSTALL_DIR/${BINARY_NAME}.new"
+        echo "Could not overwrite $install_target (file busy). Saving new binary as: $NEW_TARGET"
+        if [ "$USE_SUDO" -eq 1 ]; then
+            sudo mv "$TMP_BIN" "$NEW_TARGET" || {
+                echo "Error: Failed to move new binary to $NEW_TARGET"
+                rm -f "$TMP_BIN"
+                exit 1
+            }
+            sudo chmod 755 "$NEW_TARGET" || true
+        else
+            mv "$TMP_BIN" "$NEW_TARGET" || {
+                echo "Error: Failed to move new binary to $NEW_TARGET"
+                rm -f "$TMP_BIN"
+                exit 1
+            }
+            chmod 755 "$NEW_TARGET" || true
+        fi
+        echo "The installer was unable to overwrite the running executable due to a 'Text file busy' error."
+        echo "A copy of the new binary was saved as: $NEW_TARGET"
+        echo "To complete the update, either reboot the machine or replace the file after stopping the process:" 
+        echo "  sudo mv $NEW_TARGET $install_target && sudo chmod 755 $install_target"
+        exit 0
+    fi
 fi
 
 echo ""
