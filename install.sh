@@ -25,7 +25,7 @@ echo "Dockmate Installer 🐳"
 echo "====================================================================="
 echo ""
 echo "This installer will:"
-echo "  • Check for existing installations"
+echo "  • Check for existing installations and overwrite if needed"
 echo "  • Download the latest release from GitHub"
 echo "  • Verify the download with checksums"
 echo "  • Install to /usr/local/bin (or \$INSTALL_DIR if set)"
@@ -107,6 +107,19 @@ INSTALL_DIR="${INSTALL_DIR:-/usr/local/bin}"
 echo "Installation directory: $INSTALL_DIR"
 echo ""
 
+# Check if dockmate already exists on PATH. If found, install into the same directory
+# instead of prompting the user (keeps behavior simple and avoids accidental multi-installs).
+EXISTING_PATH="$(command -v dockmate 2>/dev/null || true)"
+if [ -n "$EXISTING_PATH" ]; then
+    if [ "$EXISTING_PATH" != "$INSTALL_DIR/$BINARY_NAME" ]; then
+        EXISTING_DIR="$(dirname "$EXISTING_PATH")"
+        echo "⚠️  Found existing 'dockmate' executable at: $EXISTING_PATH"
+        echo "Installing into existing location: $EXISTING_DIR/"
+        INSTALL_DIR="$EXISTING_DIR"
+    else
+        echo "dockmate already installed at $INSTALL_DIR; installer will overwrite the existing file." 
+    fi
+fi
 # Determine whether sudo is needed
 # 1) If running as root (id -u == 0) -> no sudo
 # 2) If INSTALL_DIR exists and is writable by current user -> no sudo
