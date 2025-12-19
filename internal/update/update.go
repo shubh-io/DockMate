@@ -243,7 +243,7 @@ func UpdateCommand() {
 	fmt.Println("Re-running installer to update...")
 
 	// Check for required shell
-	shell, hasShell := getShellCommand()
+	_, hasShell := getShellCommand()
 	if !hasShell {
 		fmt.Fprintln(os.Stderr, "Error: No compatible shell found (bash, sh)")
 		fmt.Fprintln(os.Stderr, "Please install bash or sh to use auto-update")
@@ -255,10 +255,11 @@ func UpdateCommand() {
 	installURL := "https://raw.githubusercontent.com/shubh-io/dockmate/main/install.sh"
 	installScript := "install.sh"
 
-	// Try piped install first (bash/sh only)
-	if shell == "bash" || shell == "sh" {
+	// Try piped install first using `sh` only for portability.
+	// bash directly to prevent failures on systems without bash in PATH.
+	if commandExists("sh") {
 		if commandExists("curl") {
-			cmd := exec.Command(shell, "-c", fmt.Sprintf("curl -fsSL %s | %s", installURL, shell))
+			cmd := exec.Command("sh", "-c", fmt.Sprintf("curl -fsSL %s | sh", installURL))
 			cmd.Stdout = os.Stdout
 			cmd.Stderr = os.Stderr
 			if err := cmd.Run(); err == nil {
@@ -268,13 +269,12 @@ func UpdateCommand() {
 			}
 			fmt.Println("Piped install failed, trying fallback method...")
 		} else if commandExists("wget") {
-			cmd := exec.Command(shell, "-c", fmt.Sprintf("wget -qO- %s | %s", installURL, shell))
+			cmd := exec.Command("sh", "-c", fmt.Sprintf("wget -qO- %s | sh", installURL))
 			cmd.Stdout = os.Stdout
 			cmd.Stderr = os.Stderr
 			if err := cmd.Run(); err == nil {
 				fmt.Println("")
 				fmt.Println("Updated successfully!")
-
 				return
 			}
 			fmt.Println("Piped install failed, trying fallback method...")
@@ -290,7 +290,7 @@ func UpdateCommand() {
 	}
 	// run installer script
 	fmt.Println("Running installer...")
-	runCmd := exec.Command(shell, installScript)
+	runCmd := exec.Command("sh", installScript)
 	runCmd.Stdout = os.Stdout
 	runCmd.Stderr = os.Stderr
 

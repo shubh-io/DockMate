@@ -43,19 +43,6 @@ jobs:
           file $(which dockmate)
           dockmate --version || echo "No version flag"
 
-  # Test macOS Intel - still common
-  test-macos-intel:
-    runs-on: macos-13
-    steps:
-      - uses: actions/checkout@v4
-      - name: Test install
-        run: |
-          chmod +x install.sh
-          INSTALL_DIR=$HOME/.local/bin ./install.sh
-      - name: Add to PATH
-        run: echo "$HOME/.local/bin" >> $GITHUB_PATH
-      - name: Verify
-        run: dockmate --version || echo "No version flag"
 
   # Test system-wide install with sudo
   test-system-install:
