@@ -45,7 +45,7 @@ Think of `htop`, but for Docker.
 | **Container stats** | ✅ Real-time (CPU, memory, network, disk I/O) | Real-time + ASCII graphs |
 | **Interactive logs** | ✅ | ✅ |
 | **Shell access** | ✅ One keypress | ✅ |
-| **Docker Compose** | ⏳ Planned | ✅ |
+| **Docker Compose** | ✅ | ✅ |
 | **Image management** | ⏳ Planned | ✅ Layer inspection & pruning |
 | **Metrics graphs** | ❌ Text-based (lighter) | ✅ Customizable ASCII graphs |
 | **Mouse support** | ❌ Keyboard-focused | ✅ |
@@ -239,6 +239,7 @@ dockmate --version
 | `r`               | Restart container               |
 | `l`               | View logs                       |
 | `e`               | Open interactive shell          |
+| `c`               | Compose view                    |
 | `d`               | Remove container                |
 | `q` or `Ctrl+C`   | Quit                            |
 
@@ -283,7 +284,7 @@ DockMate aims to be:
 
 ## Roadmap
 
-- [ ] Docker Compose integration  
+- [x] Docker Compose integration  
 - [ ] Container search / filter  
 - [ ] Resource monitoring alerts & notifications
 - [ ] Image management
