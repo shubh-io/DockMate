@@ -308,6 +308,7 @@ DockMate aims to be:
 ## Roadmap
 
 - [x] Docker Compose integration  
+- [x] Podman Support
 - [ ] Container search / filter  
 - [ ] Resource monitoring alerts & notifications
 - [ ] Image management
