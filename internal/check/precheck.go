@@ -44,11 +44,17 @@ const (
 // Returns false if runtime is set to something other than "docker" or "podman" or config just doesn't exists
 
 func isRuntimeConfigured() bool {
-	cfg, err := config.Load()
+	// fixed- it wasn't checking config file's path on start in last release
+	cfgPath, err := config.GetConfigPath()
 	if err != nil {
 		return false
 	}
+	if _, err := os.Stat(cfgPath); os.IsNotExist(err) {
+		return false
+	}
 
+	// Load the config (should succeed if it exists)
+	cfg, _ := config.Load()
 	runtimeType := strings.TrimSpace(strings.ToLower(cfg.Runtime.Type))
 	return (runtimeType == "docker" || runtimeType == "podman") && runtimeType != "" && runtimeType != "auto"
 }

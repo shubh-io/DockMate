@@ -166,6 +166,7 @@ const (
 	HEADER_HEIGHT        = 8
 	CONTAINER_ROW_HEIGHT = 1
 	LOG_PANEL_HEIGHT     = 15
+	INFO_PANEL_HEIGHT    = 16
 )
 
 // ============================================================================
@@ -192,6 +193,9 @@ type model struct {
 	logPanelHeight       int                               // height of logs panel
 	logsLines            []string                          // log lines
 	logsContainer        string                            // container id for logs
+	infoVisible          bool                              // info panel visible?
+	infoPanelHeight      int                               // height of info panel
+	infoContainer        *docker.Container                 // container for info display
 	sortBy               sortColumn                        // which column to sort by
 	sortAsc              bool                              // sort direction
 	columnMode           bool                              // column nav mode (vs row nav)
@@ -252,8 +256,10 @@ const (
 	modeNormal appMode = iota
 	modeColumnSelect
 	modeLogs
+	modeInfo
 	modeSettings
 	modeComposeView
+	modeHelp
 )
 
 // ============================================================================
@@ -291,6 +297,9 @@ func InitialModel() model {
 		flatList:             []treeRow{},
 		logsVisible:          false, // logs hidden by default
 		logPanelHeight:       LOG_PANEL_HEIGHT,
+		infoVisible:          false, // info hidden by default
+		infoPanelHeight:      INFO_PANEL_HEIGHT,
+		infoContainer:        nil,
 		sortBy:               sortByStatus, // sort by status as default
 		sortAsc:              false,        // descending
 		columnMode:           false,        // row nav mode
@@ -542,6 +551,9 @@ func (m *model) calculateMaxContainers() int {
 	if m.logsVisible {
 		availableHeight -= m.logPanelHeight
 	}
+	if m.infoVisible {
+		availableHeight -= INFO_PANEL_HEIGHT
+	}
 	maxContainers := availableHeight / CONTAINER_ROW_HEIGHT
 	if maxContainers < 1 {
 		return 1
@@ -724,6 +736,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.statusMessage = "Logs closed"
 				return m, nil
 			}
+			if m.infoVisible {
+				m.infoVisible = false
+				m.infoContainer = nil
+				m.currentMode = modeNormal
+				m.updatePagination()
+				m.statusMessage = "Info panel closed"
+				return m, nil
+			}
 		}
 
 		// special keys that work in both modes
@@ -784,15 +804,50 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.statusMessage = "Settings: adjust column % and refresh interval"
 			return m, nil
 
-		case "L":
-			// Toggle logs panel visibility without fetching new logs
-			m.logsVisible = !m.logsVisible
-			if m.logsVisible {
-				m.currentMode = modeLogs
-			} else {
+		case "?":
+			// toggle help mode
+			if m.currentMode == modeHelp {
 				m.currentMode = modeNormal
+				m.suspendRefresh = false
+				m.statusMessage = "Help closed"
+			} else {
+				m.currentMode = modeHelp
+				m.suspendRefresh = true
+				m.statusMessage = "Help: Keyboard shortcuts"
 			}
-			m.updatePagination()
+			return m, nil
+
+		case "l", "L":
+			// Toggle logs panel for selected container
+			var containerID string
+			if m.infoVisible {
+				return m, nil
+			}
+			if m.composeViewMode {
+				if m.cursor < len(m.flatList) && !m.flatList[m.cursor].isProject {
+					containerID = m.flatList[m.cursor].container.ID
+				}
+			} else {
+				if len(m.containers) > 0 {
+					containerID = m.containers[m.cursor].ID
+				}
+			}
+			if containerID != "" {
+				if m.logsVisible {
+					// Close logs panel
+					m.logsVisible = false
+					m.currentMode = modeNormal
+					m.statusMessage = "Logs closed"
+					m.updatePagination()
+				} else {
+					// Open logs panel and fetch logs
+					m.logsVisible = true
+					m.currentMode = modeLogs
+					m.statusMessage = "Fetching logs..."
+					m.updatePagination()
+					return m, fetchLogsCmd(containerID)
+				}
+			}
 			return m, nil
 
 		case "enter":
@@ -852,7 +907,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 
-		case "right", "l":
+		case "right":
 			// In column mode, move selection right
 			if m.columnMode {
 				if m.selectedColumn < 8 { // 0-8 for 9 columns
@@ -919,7 +974,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 				}
 				return m, nil
-			case "s":
+			case "s", "S":
 				// save settings to yaml and restart
 				currentCfg, _ := config.Load()
 				// check if runtime is changed
@@ -1137,6 +1192,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Manually refresh container list
 			m.loading = true
 			m.logsVisible = false
+			m.infoVisible = false
+			m.infoContainer = nil
 			m.updatePagination()
 			return m, fetchContainers()
 
@@ -1196,24 +1253,34 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 
-		case key.Matches(msg, Keys.Logs):
-			// Fetch and display logs for selected container
-			var containerID string
+		case key.Matches(msg, Keys.Info):
+			// Toggle info panel for selected container
+			var selected *docker.Container
+			if m.logsVisible {
+				return m, nil
+			}
 			if m.composeViewMode {
 				if m.cursor < len(m.flatList) && !m.flatList[m.cursor].isProject {
-					containerID = m.flatList[m.cursor].container.ID
+					selected = m.flatList[m.cursor].container
 				}
 			} else {
 				if len(m.containers) > 0 {
-					containerID = m.containers[m.cursor].ID
+					selected = &m.containers[m.cursor]
 				}
 			}
-			if containerID != "" {
-				m.statusMessage = "Fetching logs..."
-				m.currentMode = modeLogs
-				// recompute pagination and persistent page indicator
+			if selected != nil {
+				// toggle visibility; when opening set infoContainer pointer, when closing clear it
+				m.infoVisible = !m.infoVisible
+				if m.infoVisible {
+					m.infoContainer = selected
+					m.currentMode = modeInfo
+					m.statusMessage = "Showing container info"
+				} else {
+					m.infoContainer = nil
+					m.currentMode = modeNormal
+					m.statusMessage = "Info panel closed"
+				}
 				m.updatePagination()
-				return m, fetchLogsCmd(containerID)
 			}
 
 		case key.Matches(msg, Keys.Exec):
@@ -1292,6 +1359,11 @@ func (m model) View() string {
 	// If in settings mode, render settings in fullscreen to save some performance and get rid of render bugs
 	if m.currentMode == modeSettings {
 		return m.renderSettings(m.terminalWidth)
+	}
+
+	// If in help mode, render help in fullscreen
+	if m.currentMode == modeHelp {
+		return m.renderHelp(m.terminalWidth)
 	}
 
 	var b strings.Builder
@@ -1543,8 +1615,12 @@ func (m model) View() string {
 
 	// logs panel (if visible)
 
-	if m.logsVisible {
+	if m.logsVisible && !m.infoVisible {
 		b.WriteString(m.renderLogsPanel(width))
+	}
+	// info panel (if visible)
+	if m.infoVisible && !m.logsVisible {
+		b.WriteString(m.renderInfoPanel(width))
 	}
 
 	// page indicator (persistent) - always render
@@ -1916,21 +1992,101 @@ func (m model) renderLogsPanel(width int) string {
 	return b.String()
 }
 
-// renderSettings shows a full-screen settings view where users can
-// adjust column percent allocations .
-// renderSettings generates a formatted string representation of the settings menu.
-// It takes the width of the display as an argument and returns a string that
-// contains the rendered settings menu with the appropriate styles applied.
-// The menu includes a title, a list of column names with their respective
-// percentage widths, a refresh interval row, and a runtime row. The currently
-// selected item is highlighted. Additionally, it provides navigation instructions
-// at the bottom of the menu.
-//
-// Parameters:
-//   - width: An integer representing the width of the display area for the menu.
-//
-// Returns:
-//   - A string containing the rendered settings menu.
+// renderInfoPanel prints a fixed-height info section displaying container information
+func (m model) renderInfoPanel(width int) string {
+	var b strings.Builder
+
+	b.WriteString(dividerStyle.Render(strings.Repeat("─", width)))
+	b.WriteString("\n")
+
+	containerName := ""
+	if m.infoContainer != nil && len(m.infoContainer.Names) > 0 {
+		containerName = m.infoContainer.Names[0]
+	}
+	infoTitle := fmt.Sprintf("Container Info: %s ", containerName)
+	if len(infoTitle) < width {
+		infoTitle += strings.Repeat(" ", width-len(infoTitle))
+	}
+	b.WriteString(titleStyle.Render(infoTitle))
+	b.WriteString("\n")
+
+	if m.infoContainer == nil {
+		b.WriteString(normalStyle.Render("  No container selected"))
+		b.WriteString("\n")
+		return b.String()
+	}
+
+	c := m.infoContainer
+
+	// Display container information fields
+	infoFields := []struct {
+		label string
+		value string
+	}{
+		{"Container ID", c.ID},
+		{"Name", containerName},
+		{"Image", c.Image},
+		{"Status", c.Status},
+		{"State", c.State},
+		{"CPU Usage", c.CPU},
+		{"Memory Usage", c.Memory},
+		{"Network I/O", c.NetIO},
+		{"Block I/O", c.BlockIO},
+		{"Ports", c.Ports},
+	}
+
+	// Add compose-specific fields if available
+	if c.ComposeProject != "" {
+		infoFields = append(infoFields, struct {
+			label string
+			value string
+		}{"Compose Project", c.ComposeProject})
+	}
+	if c.ComposeService != "" {
+		infoFields = append(infoFields, struct {
+			label string
+			value string
+		}{"Compose Service", c.ComposeService})
+	}
+
+	maxInfoLines := m.infoPanelHeight - 2 // account for divider and title
+	if maxInfoLines < 1 {
+		maxInfoLines = 1
+	}
+
+	// Render info fields
+	for i := 0; i < len(infoFields) && i < maxInfoLines; i++ {
+		field := infoFields[i]
+		value := field.value
+		if value == "" {
+			value = "─"
+		}
+		// Truncate value if too long
+		maxValueLen := width - len(field.label) - 6
+		if maxValueLen > 0 && len(value) > maxValueLen {
+			value = value[:maxValueLen-3] + "..."
+		}
+		infoLine := fmt.Sprintf("  %s: %s", infoLabelStyle.Render(field.label), infoValueStyle.Render(value))
+		if visibleLen(infoLine) < width {
+			infoLine += strings.Repeat(" ", width-visibleLen(infoLine))
+		}
+		b.WriteString(normalStyle.Render(infoLine))
+		b.WriteString("\n")
+	}
+
+	// Fill remaining lines with empty space
+	renderedLines := len(infoFields)
+	if renderedLines > maxInfoLines {
+		renderedLines = maxInfoLines
+	}
+	for i := renderedLines; i < maxInfoLines; i++ {
+		b.WriteString(normalStyle.Render(strings.Repeat(" ", width)))
+		b.WriteString("\n")
+	}
+
+	return b.String()
+}
+
 func (m model) renderSettings(width int) string {
 	var b strings.Builder
 
@@ -1996,6 +2152,109 @@ func (m model) renderSettings(width int) string {
 	return b.String()
 }
 
+// renderHelp shows a full-screen help view with all keyboard shortcuts
+func (m model) renderHelp(width int) string {
+	var b strings.Builder
+
+	title := titleStyle.Render("┌─ Help ─┐")
+	padding := (width - visibleLen(title)) / 2
+	if padding < 0 {
+		padding = 0
+	}
+	header := strings.Repeat(" ", padding) + title
+	if visibleLen(header) < width {
+		header += strings.Repeat(" ", width-visibleLen(header))
+	}
+	b.WriteString(header)
+	b.WriteString("\n\n")
+
+	// Define help sections with their keybindings
+	helpSections := []struct {
+		title string
+		items []struct {
+			key  string
+			desc string
+		}
+	}{
+		{
+			title: "Navigation",
+			items: []struct {
+				key  string
+				desc string
+			}{
+				{"↑ / ↓", "Move cursor up/down"},
+				{"← / →", "Navigate between pages"},
+				{"Tab", "Toggle column selection mode"},
+				{"Enter", "Sort by selected column (in column mode)"},
+			},
+		},
+		{
+			title: "Container Actions",
+			items: []struct {
+				key  string
+				desc string
+			}{
+				{"S", "Start selected container"},
+				{"X", "Stop selected container"},
+				{"R", "Restart selected container"},
+				{"D", "Remove selected container"},
+				{"E", "Open interactive shell (bash/sh)"},
+			},
+		},
+		{
+			title: "View & Information",
+			items: []struct {
+				key  string
+				desc string
+			}{
+				{"L", "View/Toggle container logs"},
+				{"I", "View/Toggle container info"},
+				{"C", "Toggle compose/normal view"},
+			},
+		},
+		{
+			title: "Application",
+			items: []struct {
+				key  string
+				desc string
+			}{
+				{"F2", "Open settings"},
+				{"?", "Show this help"},
+				{"q", "Quit application"},
+				{"Esc", "Back/Cancel"},
+			},
+		},
+	}
+
+	// Render each section, one by one
+	for _, section := range helpSections {
+		// Section title
+		sectionTitle := infoLabelStyle.Render("━━ " + section.title + " ━━━━━━━━━━━━━━━━━━━━━━")
+		b.WriteString(sectionTitle)
+		b.WriteString("\n\n")
+
+		// Section items
+		for _, item := range section.items {
+			keyPart := footerKeyStyle.Render(fmt.Sprintf("  %-12s", item.key))
+			descPart := normalStyle.Render(item.desc)
+			line := keyPart + " " + descPart
+			b.WriteString(line)
+			b.WriteString("\n")
+		}
+		b.WriteString("\n")
+	}
+
+	b.WriteString("\n")
+	instr := "[?] or [Esc] to close  •  Visit https://github.com/shubh-io/dockmate for more info"
+	if visibleLen(instr) < width {
+		instr += strings.Repeat(" ", width-visibleLen(instr))
+	}
+	b.WriteString(infoValueStyle.Render(instr))
+	b.WriteString("\n")
+
+	return b.String()
+}
+
 // padRight pads a string to visible width
 func padRight(s string, width int) string {
 	if visibleLen(s) >= width {
@@ -2027,9 +2286,27 @@ func (m model) renderFooter(width int) string {
 			key  string
 			desc string
 		}{
-			{"Shift + l", "Close Logs"},
+			{"l", "Close Logs"},
 			{"↑↓", "Scroll"},
 			{"E", "Interactive Shell"},
+			{"Esc", "Back"},
+		}
+	case modeInfo:
+		keys = []struct {
+			key  string
+			desc string
+		}{
+			{"i", "Close info"},
+			{"↑↓", "Scroll"},
+			{"E", "Interactive Shell"},
+			{"Esc", "Back"},
+		}
+	case modeHelp:
+		keys = []struct {
+			key  string
+			desc string
+		}{
+			{"?", "Close Help"},
 			{"Esc", "Back"},
 		}
 	default: // modeNormal
@@ -2040,13 +2317,8 @@ func (m model) renderFooter(width int) string {
 			{"↑↓", "Nav"},
 			{"←→", "Nav pages"},
 			{"Tab", "Col Mode"},
-			{"s", "Start"},
-			{"x", "Stop"},
-			{"r", "Restart"},
-			{"l", "Logs"},
-			{"e", "Shell"},
-			{"d", "Remove"},
 			{"c", "Compose View"},
+			{"?", "Keyboard shortcuts"},
 			{"f2", "Settings"},
 			{"q", "Quit"},
 		}
@@ -2058,13 +2330,9 @@ func (m model) renderFooter(width int) string {
 				{"↑↓", "Nav"},
 				{"←→", "Nav pages"},
 				{"Tab", "Col Mode"},
-				{"s", "Start"},
-				{"x", "Stop"},
-				{"r", "Restart"},
-				{"l", "Logs"},
-				{"e", "Shell"},
-				{"d", "Remove"},
+
 				{"c", "Normal View"},
+				{"?", "Keyboard shortcuts"},
 				{"f2", "Settings"},
 				{"q", "Quit"},
 			}
