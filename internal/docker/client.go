@@ -8,7 +8,25 @@ import (
 	"os/exec"
 	"strings"
 	"time"
+
+	"github.com/shubh-io/dockmate/internal/config"
 )
+
+// runtimeBin returns the configured container runtime binary name.
+// Defaults to docker if config cannot be loaded or runtime is unset/auto.
+func runtimeBin() string {
+	cfg, err := config.Load()
+	if err != nil {
+		return "docker"
+	}
+
+	rt := strings.TrimSpace(strings.ToLower(cfg.Runtime.Type))
+	if rt == "podman" {
+		return "podman"
+	}
+
+	return "docker"
+}
 
 // GetContainerStats grabs cpu/mem/pids for a container
 // returns empty strings on error so we don't block the UI
@@ -18,7 +36,7 @@ func GetContainerStats(containerID string) (cpu string, mem string, pids string,
 	defer cancel()
 
 	// --no-stream = instant snapshot, not continuous
-	cmd := exec.CommandContext(ctx, "docker", "stats", "--no-stream", "--format", "{{json .}}", containerID)
+	cmd := exec.CommandContext(ctx, runtimeBin(), "stats", "--no-stream", "--format", "{{json .}}", containerID)
 
 	output, err := cmd.Output()
 	if err != nil {
@@ -54,7 +72,7 @@ func GetLogs(containerID string) ([]string, error) {
 	// run docker logs but only tail the last 100 lines to avoid huge output
 	// using the CLI --tail is more efficient than fetching everything then truncating
 	// saves resources and time
-	cmd := exec.CommandContext(ctx, "docker", "logs", "--tail", "100", containerID)
+	cmd := exec.CommandContext(ctx, runtimeBin(), "logs", "--tail", "100", containerID)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return nil, err
@@ -93,104 +111,144 @@ func GetLogs(containerID string) ([]string, error) {
 	return out, nil
 }
 
-// ListContainers gets all containers using docker CLI
+// ListContainers gets all containers using docker/podman CLI
 // grabs live stats for running ones
 func ListContainers() ([]Container, error) {
 	// 30 sec timeout since we fetch stats for each running container
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	// docker ps with json output
-	cmd := exec.CommandContext(ctx, "docker", "ps", "--format", "{{json .}}", "--all")
+	runtime := runtimeBin()
+	var cmd *exec.Cmd
 
-	stdout, err := cmd.StdoutPipe()
+	if runtime == "podman" {
+		// Podman returns a JSON array
+		cmd = exec.CommandContext(ctx, runtime, "ps", "--format", "json", "--all")
+	} else {
+		// Docker returns newline-delimited JSON
+		cmd = exec.CommandContext(ctx, runtime, "ps", "--format", "{{json .}}", "--all")
+	}
+
+	output, err := cmd.Output()
 	if err != nil {
 		return nil, err
 	}
 
-	if err := cmd.Start(); err != nil {
-		return nil, err
-	}
-
-	// read json lines
-	scanner := bufio.NewScanner(stdout)
-
 	var out []Container
-	var runningIDs []string // collect running container IDs
+	var runningIDs []string
 
-	// docker ps returns json like this
-	type psEntry struct {
-		ID     string `json:"ID"`
-		Names  string `json:"Names"`
-		Image  string `json:"Image"`
-		Status string `json:"Status"`
-		// State  string `json:"State"`
-		Ports string `json:"Ports"`
-	}
-
-	// parse each line
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" {
-			continue
+	if runtime == "podman" {
+		// Podman format - JSON array
+		type podmanEntry struct {
+			Id     string   `json:"Id"`
+			Names  []string `json:"Names"`
+			Image  string   `json:"Image"`
+			Status string   `json:"Status"`
+			State  string   `json:"State"`
+			Ports  []struct {
+				HostPort      int    `json:"host_port"`
+				ContainerPort int    `json:"container_port"`
+				Protocol      string `json:"protocol"`
+			} `json:"Ports"`
 		}
 
-		var e psEntry
-		if err := json.Unmarshal([]byte(line), &e); err != nil {
-			cmd.Wait()
-			return nil, fmt.Errorf("parsing docker output: %w", err)
+		var entries []podmanEntry
+		if err := json.Unmarshal(output, &entries); err != nil {
+			return nil, fmt.Errorf("parsing podman output: %w", err)
 		}
 
-		// split comma separated names
-		names := []string{}
-		if e.Names != "" {
-			for _, n := range strings.Split(e.Names, ",") {
-				names = append(names, strings.TrimSpace(n))
+		for _, e := range entries {
+			// Format ports like Docker does
+			ports := ""
+			if len(e.Ports) > 0 {
+				var portStrs []string
+				for _, p := range e.Ports {
+					if p.HostPort > 0 {
+						portStrs = append(portStrs, fmt.Sprintf("0.0.0.0:%d->%d/%s", p.HostPort, p.ContainerPort, p.Protocol))
+					}
+				}
+				ports = strings.Join(portStrs, ", ")
 			}
+
+			state := strings.ToLower(e.State)
+			container := Container{
+				ID:     e.Id,
+				Names:  e.Names,
+				Image:  e.Image,
+				Status: e.Status,
+				State:  state,
+				Ports:  ports,
+			}
+
+			if state == "running" {
+				runningIDs = append(runningIDs, e.Id)
+			}
+
+			out = append(out, container)
+		}
+	} else {
+		// Docker format - newline-delimited JSON
+		type dockerEntry struct {
+			ID     string `json:"ID"`
+			Names  string `json:"Names"`
+			Image  string `json:"Image"`
+			Status string `json:"Status"`
+			Ports  string `json:"Ports"`
 		}
 
-		// build container struct
-		// derive a short state from Status text (ex- "Up 2 minutes" -> "running")
-		st := strings.ToLower(strings.TrimSpace(e.Status))
-		state := "unknown"
-		if strings.HasPrefix(st, "up") {
-			state = "running"
-		} else if strings.HasPrefix(st, "paused") || strings.Contains(st, "paused") {
-			state = "paused"
-		} else if strings.Contains(st, "restarting") {
-			state = "restarting"
-		} else if strings.HasPrefix(st, "exited") || strings.Contains(st, "exited") || strings.Contains(st, "dead") {
-			state = "exited"
-		} else if strings.HasPrefix(st, "created") {
-			state = "created"
+		scanner := bufio.NewScanner(strings.NewReader(string(output)))
+		for scanner.Scan() {
+			line := strings.TrimSpace(scanner.Text())
+			if line == "" {
+				continue
+			}
+
+			var e dockerEntry
+			if err := json.Unmarshal([]byte(line), &e); err != nil {
+				return nil, fmt.Errorf("parsing docker output: %w", err)
+			}
+
+			// Split comma separated names
+			names := []string{}
+			if e.Names != "" {
+				for _, n := range strings.Split(e.Names, ",") {
+					names = append(names, strings.TrimSpace(n))
+				}
+			}
+
+			// Derive state from Status text
+			st := strings.ToLower(strings.TrimSpace(e.Status))
+			state := "unknown"
+			if strings.HasPrefix(st, "up") {
+				state = "running"
+			} else if strings.HasPrefix(st, "paused") || strings.Contains(st, "paused") {
+				state = "paused"
+			} else if strings.Contains(st, "restarting") {
+				state = "restarting"
+			} else if strings.HasPrefix(st, "exited") || strings.Contains(st, "exited") || strings.Contains(st, "dead") {
+				state = "exited"
+			} else if strings.HasPrefix(st, "created") {
+				state = "created"
+			}
+
+			container := Container{
+				ID:     e.ID,
+				Names:  names,
+				Image:  e.Image,
+				Status: e.Status,
+				State:  state,
+				Ports:  e.Ports,
+			}
+
+			if state == "running" {
+				runningIDs = append(runningIDs, e.ID)
+			}
+
+			out = append(out, container)
 		}
-
-		container := Container{
-			ID:     e.ID,
-			Names:  names,
-			Image:  e.Image,
-			Status: e.Status,
-			State:  state,
-			Ports:  e.Ports,
+		if err := scanner.Err(); err != nil {
+			return nil, err
 		}
-
-		// collect running container Ids for batch stats fetch (based on derived State)
-		if state == "running" {
-			runningIDs = append(runningIDs, e.ID)
-		}
-
-		out = append(out, container)
-	}
-
-	// Check for scanner errors
-	if err := scanner.Err(); err != nil {
-		cmd.Wait()
-		return nil, err
-	}
-
-	// Wait for command to complete
-	if err := cmd.Wait(); err != nil {
-		return nil, err
 	}
 
 	// Fetch stats for all running containers in ONE call
@@ -227,7 +285,7 @@ func GetAllContainerStats(containerIDs []string) (map[string]ContainerStats, err
 	args := []string{"stats", "--no-stream", "--format", "{{json .}}"}
 	args = append(args, containerIDs...)
 
-	cmd := exec.CommandContext(ctx, "docker", args...)
+	cmd := exec.CommandContext(ctx, runtimeBin(), args...)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return nil, err
@@ -288,138 +346,222 @@ func DoAction(action, containerID string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, "docker", action, containerID)
+	cmd := exec.CommandContext(ctx, runtimeBin(), action, containerID)
 	return cmd.Run()
 }
 
-// FetchComposeProjects fetches all Docker Compose projects with their containers
+// FetchComposeProjects fetches all Docker/Podman Compose projects with their containers
 // Groups containers by compose project and calculates running/total counts
 func FetchComposeProjects() (map[string]*ComposeProject, error) {
 	// 30 sec timeout
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	// Get all containers with compose labels
-	cmd := exec.CommandContext(ctx, "docker", "ps", "-a",
-		"--filter", "label=com.docker.compose.project",
-		"--format", "{{json .}}")
+	runtime := runtimeBin()
+	var cmd *exec.Cmd
 
-	stdout, err := cmd.StdoutPipe()
+	if runtime == "podman" {
+		// well podman uses io.podman.compose labels
+		cmd = exec.CommandContext(ctx, runtime, "ps", "-a",
+			"--filter", "label=io.podman.compose.project",
+			"--format", "json")
+	} else {
+		// and docker uses com.docker.compose labels
+		cmd = exec.CommandContext(ctx, runtime, "ps", "-a",
+			"--filter", "label=com.docker.compose.project",
+			"--format", "{{json .}}")
+	}
+
+	output, err := cmd.Output()
 	if err != nil {
 		return nil, err
 	}
 
-	if err := cmd.Start(); err != nil {
-		return nil, err
-	}
-
-	// Structure for docker ps JSON output
-	type psEntry struct {
-		ID        string `json:"ID"`
-		Names     string `json:"Names"`
-		Image     string `json:"Image"`
-		Status    string `json:"Status"`
-		State     string `json:"State"`
-		Ports     string `json:"Ports"`
-		Labels    string `json:"Labels"`
-		CreatedAt string `json:"CreatedAt"`
-	}
-
-	scanner := bufio.NewScanner(stdout)
 	projects := make(map[string]*ComposeProject)
 	var runningIDs []string
 
-	// Parse each container line
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" {
-			continue
+	if runtime == "podman" {
+		// Podman format - json array
+		type podmanEntry struct {
+			Id     string            `json:"Id"`
+			Names  []string          `json:"Names"`
+			Image  string            `json:"Image"`
+			Status string            `json:"Status"`
+			State  string            `json:"State"`
+			Labels map[string]string `json:"Labels"`
+			Ports  []struct {
+				HostPort      int    `json:"host_port"`
+				ContainerPort int    `json:"container_port"`
+				Protocol      string `json:"protocol"`
+			} `json:"Ports"`
 		}
 
-		var e psEntry
-		if err := json.Unmarshal([]byte(line), &e); err != nil {
-			continue // Skip malformed entries
+		var entries []podmanEntry
+		if err := json.Unmarshal(output, &entries); err != nil {
+			return nil, fmt.Errorf("parsing podman compose output: %w", err)
 		}
 
-		// Parse labels from comma-separated key=value pairs
-		labels := parseLabels(e.Labels)
+		for _, e := range entries {
+			// Extract compose metadata from Podman labels
+			projectName := e.Labels["io.podman.compose.project"]
+			serviceName := e.Labels["io.podman.compose.service"]
+			containerNumber := e.Labels["io.podman.compose.container-number"]
+			configFile := e.Labels["io.podman.compose.project.config_files"]
+			workingDir := e.Labels["io.podman.compose.project.working_dir"]
 
-		// Extract compose metadata
-		projectName := labels["com.docker.compose.project"]
-		serviceName := labels["com.docker.compose.service"]
-		containerNumber := labels["com.docker.compose.container-number"]
-
-		// Skip if not a compose container
-		if projectName == "" {
-			continue
-		}
-
-		// Split comma separated names
-		names := []string{}
-		if e.Names != "" {
-			for _, n := range strings.Split(e.Names, ",") {
-				names = append(names, strings.TrimSpace(n))
+			// Skip if not a compose container
+			if projectName == "" {
+				continue
 			}
-		}
 
-		// Derive state from Status
-		st := strings.ToLower(strings.TrimSpace(e.Status))
-		state := "unknown"
-		if strings.HasPrefix(st, "up") {
-			state = "running"
-		} else if strings.HasPrefix(st, "paused") || strings.Contains(st, "paused") {
-			state = "paused"
-		} else if strings.Contains(st, "restarting") {
-			state = "restarting"
-		} else if strings.HasPrefix(st, "exited") || strings.Contains(st, "exited") || strings.Contains(st, "dead") {
-			state = "exited"
-		} else if strings.HasPrefix(st, "created") {
-			state = "created"
-		}
-
-		// Build container struct
-		container := Container{
-			ID:             e.ID,
-			Names:          names,
-			Image:          e.Image,
-			Status:         e.Status,
-			State:          state,
-			Ports:          e.Ports,
-			ComposeProject: projectName,
-			ComposeService: serviceName,
-			ComposeNumber:  containerNumber,
-		}
-
-		// Collect running IDs for stats
-		if state == "running" {
-			runningIDs = append(runningIDs, e.ID)
-		}
-
-		// Get or create project
-		project, exists := projects[projectName]
-		if !exists {
-			project = &ComposeProject{
-				Name:       projectName,
-				Containers: []Container{},
-				ConfigFile: labels["com.docker.compose.project.config_files"],
-				WorkingDir: labels["com.docker.compose.project.working_dir"],
+			// ports like Docker --
+			ports := ""
+			if len(e.Ports) > 0 {
+				var portStrs []string
+				for _, p := range e.Ports {
+					if p.HostPort > 0 {
+						portStrs = append(portStrs, fmt.Sprintf("0.0.0.0:%d->%d/%s", p.HostPort, p.ContainerPort, p.Protocol))
+					}
+				}
+				ports = strings.Join(portStrs, ", ")
 			}
-			projects[projectName] = project
+
+			state := strings.ToLower(e.State)
+
+			// container struct
+			container := Container{
+				ID:             e.Id,
+				Names:          e.Names,
+				Image:          e.Image,
+				Status:         e.Status,
+				State:          state,
+				Ports:          ports,
+				ComposeProject: projectName,
+				ComposeService: serviceName,
+				ComposeNumber:  containerNumber,
+			}
+
+			// Collect running IDs for stats
+			if state == "running" {
+				runningIDs = append(runningIDs, e.Id)
+			}
+
+			// Get or create project
+			project, exists := projects[projectName]
+			if !exists {
+				project = &ComposeProject{
+					Name:       projectName,
+					Containers: []Container{},
+					ConfigFile: configFile,
+					WorkingDir: workingDir,
+				}
+				projects[projectName] = project
+			}
+
+			// Add container to project
+			project.Containers = append(project.Containers, container)
+		}
+	} else {
+		// Docker format
+		type dockerEntry struct {
+			ID        string `json:"ID"`
+			Names     string `json:"Names"`
+			Image     string `json:"Image"`
+			Status    string `json:"Status"`
+			State     string `json:"State"`
+			Ports     string `json:"Ports"`
+			Labels    string `json:"Labels"`
+			CreatedAt string `json:"CreatedAt"`
 		}
 
-		// Add container to project
-		project.Containers = append(project.Containers, container)
-	}
+		scanner := bufio.NewScanner(strings.NewReader(string(output)))
 
-	// Check scanner errors
-	if err := scanner.Err(); err != nil {
-		cmd.Wait()
-		return nil, err
-	}
+		// Parse each container line
+		for scanner.Scan() {
+			line := strings.TrimSpace(scanner.Text())
+			if line == "" {
+				continue
+			}
 
-	// Wait for command completion
-	if err := cmd.Wait(); err != nil {
-		return nil, err
+			var e dockerEntry
+			if err := json.Unmarshal([]byte(line), &e); err != nil {
+				continue // Skip malformed entries
+			}
+
+			// Parse labels from comma-separated key=value pairs
+			labels := parseLabels(e.Labels)
+
+			// Extract compose metadata
+			projectName := labels["com.docker.compose.project"]
+			serviceName := labels["com.docker.compose.service"]
+			containerNumber := labels["com.docker.compose.container-number"]
+
+			// Skip if not a compose container
+			if projectName == "" {
+				continue
+			}
+
+			// Split comma separated names
+			names := []string{}
+			if e.Names != "" {
+				for _, n := range strings.Split(e.Names, ",") {
+					names = append(names, strings.TrimSpace(n))
+				}
+			}
+
+			// Derive state from Status
+			st := strings.ToLower(strings.TrimSpace(e.Status))
+			state := "unknown"
+			if strings.HasPrefix(st, "up") {
+				state = "running"
+			} else if strings.HasPrefix(st, "paused") || strings.Contains(st, "paused") {
+				state = "paused"
+			} else if strings.Contains(st, "restarting") {
+				state = "restarting"
+			} else if strings.HasPrefix(st, "exited") || strings.Contains(st, "exited") || strings.Contains(st, "dead") {
+				state = "exited"
+			} else if strings.HasPrefix(st, "created") {
+				state = "created"
+			}
+
+			// Build container struct
+			container := Container{
+				ID:             e.ID,
+				Names:          names,
+				Image:          e.Image,
+				Status:         e.Status,
+				State:          state,
+				Ports:          e.Ports,
+				ComposeProject: projectName,
+				ComposeService: serviceName,
+				ComposeNumber:  containerNumber,
+			}
+
+			// Collect running IDs for stats
+			if state == "running" {
+				runningIDs = append(runningIDs, e.ID)
+			}
+
+			// Get or create project
+			project, exists := projects[projectName]
+			if !exists {
+				project = &ComposeProject{
+					Name:       projectName,
+					Containers: []Container{},
+					ConfigFile: labels["com.docker.compose.project.config_files"],
+					WorkingDir: labels["com.docker.compose.project.working_dir"],
+				}
+				projects[projectName] = project
+			}
+
+			// Add container to project
+			project.Containers = append(project.Containers, container)
+		}
+
+		// Check scanner errors
+		if err := scanner.Err(); err != nil {
+			return nil, err
+		}
 	}
 
 	// Fetch stats for running containers

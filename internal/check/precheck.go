@@ -8,6 +8,10 @@ import (
 	"os/user"
 	"runtime"
 	"strings"
+
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/shubh-io/dockmate/internal/config"
+	"github.com/shubh-io/dockmate/internal/tui"
 )
 
 // ============================================================================
@@ -29,7 +33,59 @@ const (
 	DockerDaemonNotRunning
 	DockerPermissionDenied
 	DockerGroupNotRefreshed
+	PodmanNotInstalled
+	PodmanServiceNotRunning
 )
+
+// Runtime Selection
+
+// checks if the runtime is properly configured
+
+// Returns false if runtime is set to something other than "docker" or "podman" or config just doesn't exists
+
+func isRuntimeConfigured() bool {
+	cfg, err := config.Load()
+	if err != nil {
+		return false
+	}
+
+	runtimeType := strings.TrimSpace(strings.ToLower(cfg.Runtime.Type))
+	return (runtimeType == "docker" || runtimeType == "podman") && runtimeType != "" && runtimeType != "auto"
+}
+
+// promptRuntimeSelection shows the runtime selector TUI and saves selection
+
+func promptRuntimeSelection() error {
+	// show runtime selection TUI
+	runtimeSelector := tui.NewRuntimeSelectionModel()
+	program := tea.NewProgram(runtimeSelector, tea.WithAltScreen())
+
+	finalModel, err := program.Run()
+	if err != nil {
+		return fmt.Errorf("runtime selection failed: %w", err)
+	}
+
+	rsModel, ok := finalModel.(tui.RuntimeSelectionModel)
+	if !ok {
+		return fmt.Errorf("invalid model type returned")
+	}
+
+	selectedRuntime := strings.TrimSpace(rsModel.GetChoice())
+	if selectedRuntime == "" {
+		return fmt.Errorf("no runtime selected")
+	}
+
+	// Load current config and update runtime
+	cfg, _ := config.Load()
+	cfg.Runtime.Type = selectedRuntime
+
+	// Save updated config
+	if err := cfg.Save(); err != nil {
+		return fmt.Errorf("failed to save runtime selection: %w", err)
+	}
+
+	return nil
+}
 
 // ============================================================================
 // PreCheck Functions
@@ -81,6 +137,40 @@ func getDockerRestartCommand() string {
 
 	// Fallback
 	return "sudo service docker restart"
+}
+
+// getPodmanStartCommand returns their start command per platform (peak user case handling lol)
+
+func getPodmanStartCommand() string {
+	if runtime.GOOS == "darwin" {
+		return "podman machine start"
+	}
+
+	if commandExists("systemctl") {
+		return "systemctl --user start podman.socket"
+	}
+
+	if commandExists("podman") {
+		return "podman system service -t 0 &"
+	}
+
+	return "podman machine start"
+}
+
+// getPodmanErrorMessage provides platform-specific guidance for starting Podman
+func getPodmanErrorMessage() string {
+	cmd := getPodmanStartCommand()
+
+	switch runtime.GOOS {
+	case "darwin":
+		return fmt.Sprintf("Podman machine not running.\n\nQuick fix:\n  %s\n\nIf machine doesn't exist:\n  podman machine init\n  podman machine start\n\nHelp: https://docs.podman.io/", cmd)
+
+	case "linux":
+		return fmt.Sprintf("Podman not accessible.\n\nTry:\n  %s\n  \nOr check if rootless is set up:\n  podman info\n\nHelp: https://github.com/containers/podman/blob/main/troubleshooting.md", cmd)
+
+	}
+
+	return fmt.Sprintf("Start Podman: %s\nHelp: https://docs.podman.io/", cmd)
 }
 
 // checks if the 'docker' group exists on the system and anchor before docker to help find group that 'starts with' docker
@@ -241,6 +331,21 @@ func checkDockerInstalled() PreCheckResult {
 	return PreCheckResult{Passed: true}
 }
 
+// check if podman is installed in PATH
+func checkPodmanInstalled() PreCheckResult {
+	_, err := exec.LookPath("podman")
+	if err != nil {
+		return PreCheckResult{
+			Passed:       false,
+			ErrorType:    PodmanNotInstalled,
+			ErrorMessage: "Podman is not installed or not found in PATH",
+			SuggestedAction: "Please install Podman to use this runtime.\n\n" +
+				"Installation guide: https://podman.io/docs/installation",
+		}
+	}
+	return PreCheckResult{Passed: true}
+}
+
 func checkDockerDaemon() PreCheckResult {
 	cmd := exec.Command("docker", "info")
 	var stderr bytes.Buffer
@@ -357,6 +462,26 @@ func checkDockerDaemon() PreCheckResult {
 	}
 }
 
+func checkPodmanService() PreCheckResult {
+	cmd := exec.Command("podman", "info")
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+
+	err := cmd.Run()
+	if err == nil {
+		return PreCheckResult{Passed: true}
+	}
+
+	stderrOutput := stderr.String()
+
+	return PreCheckResult{
+		Passed:          false,
+		ErrorType:       PodmanServiceNotRunning,
+		ErrorMessage:    fmt.Sprintf("Podman service is not running or not reachable.\n\nPodman error:\n%s", stderrOutput),
+		SuggestedAction: getPodmanErrorMessage(),
+	}
+}
+
 // Helper function to check if daemon is actually running
 func isDaemonRunning() bool {
 	cmd := exec.Command("docker", "info")
@@ -365,16 +490,59 @@ func isDaemonRunning() bool {
 }
 
 func RunPreChecks() PreCheckResult {
-	// Check 1: Is Docker even installed?
-	result := checkDockerInstalled()
-	if !result.Passed {
-		return result
+	// Check - Is runtime configured? If not, prompt user
+	if !isRuntimeConfigured() {
+		err := promptRuntimeSelection()
+		if err != nil {
+			return PreCheckResult{
+				Passed:          false,
+				ErrorType:       NoError,
+				ErrorMessage:    fmt.Sprintf("Failed to select runtime: %v", err),
+				SuggestedAction: "If you want to Change the runtime, run: \n dockmate --runtime \n",
+			}
+		}
 	}
 
-	// Check 2: Can we connect to Docker daemon
-	result = checkDockerDaemon()
-	if !result.Passed {
-		return result
+	cfg, _ := config.Load()
+	runtimeType := strings.TrimSpace(strings.ToLower(cfg.Runtime.Type))
+	if runtimeType == "" {
+		runtimeType = "docker"
+	}
+
+	switch runtimeType {
+	case "podman":
+		result := checkPodmanInstalled()
+		if !result.Passed {
+			result.SuggestedAction += "\n\nOr If you want to Change the runtime to docker, run: \n dockmate --runtime \n"
+			return result
+		}
+
+		result = checkPodmanService()
+		if !result.Passed {
+			result.SuggestedAction += "\n\nOr If you want to Change the runtime to docker, run: \n dockmate --runtime \n"
+			return result
+		}
+
+	case "docker", "auto":
+		result := checkDockerInstalled()
+		if !result.Passed {
+			result.SuggestedAction += "\n\nOr If you want to Change the runtime to podman, run: \n dockmate --runtime \n"
+			return result
+		}
+
+		result = checkDockerDaemon()
+		if !result.Passed {
+			result.SuggestedAction += "\n\nOr If you want to Change the runtime to podman, run: \n dockmate --runtime \n"
+			return result
+		}
+
+	default:
+		return PreCheckResult{
+			Passed:          false,
+			ErrorType:       NoError,
+			ErrorMessage:    fmt.Sprintf("Unsupported runtime type: %s", runtimeType),
+			SuggestedAction: "Please choose docker or podman using: \n dockmate --runtime \n",
+		}
 	}
 
 	return PreCheckResult{Passed: true}

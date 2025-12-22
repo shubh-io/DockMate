@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -14,6 +15,7 @@ import (
 	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/shubh-io/dockmate/internal/config"
 	"github.com/shubh-io/dockmate/internal/docker"
 )
 
@@ -214,18 +216,18 @@ type treeRow struct {
 }
 
 // runtime
-// type ContainerRuntime string
+type ContainerRuntime string
 
-// const (
-// 	RuntimeDocker ContainerRuntime = "docker"
-// 	RuntimePodman ContainerRuntime = "podman"
-// )
+const (
+	RuntimeDocker ContainerRuntime = "docker"
+	RuntimePodman ContainerRuntime = "podman"
+)
 
 // app settings
 type Settings struct {
-	ColumnPercents  []int // percent allocation for each column aprx sum to 100
-	RefreshInterval int   // seconds between auto refresh ticks
-	// Runtime         ContainerRuntime // runtime
+	ColumnPercents  []int            // percent allocation for each column aprx sum to 100
+	RefreshInterval int              // seconds between auto refresh ticks
+	Runtime         ContainerRuntime // runtime
 }
 
 // which column to sort by
@@ -260,6 +262,23 @@ const (
 
 // set up initial state
 func InitialModel() model {
+	// Load configuration from file
+	cfg, _ := config.Load()
+
+	// Map config layout to column percentages (all 9 columns)
+	columnPercents := []int{
+		cfg.Layout.ContainerId,        // CONTAINER ID
+		cfg.Layout.ContainerNameWidth, // NAME
+		cfg.Layout.MemoryWidth,        // MEMORY
+		cfg.Layout.CPUWidth,           // CPU
+		cfg.Layout.NetIOWidth,         // NET I/O
+		cfg.Layout.DiskIOWidth,        // Disk I/O
+		cfg.Layout.ImageWidth,         // IMAGE
+		cfg.Layout.StatusWidth,        // STATUS
+		cfg.Layout.PortWidth,          // PORTS
+	}
+	// runtime load
+
 	return model{
 		loading:              true,       // start loading
 		startTime:            time.Now(), // track uptime
@@ -277,11 +296,11 @@ func InitialModel() model {
 		columnMode:           false,        // row nav mode
 		selectedColumn:       7,            // status column
 		currentMode:          modeNormal,   // start in normal mode
-		// sensible defaults for settings (sum to 100)
+		// Load settings from config file
 		settings: Settings{
-			ColumnPercents:  []int{8, 14, 6, 6, 10, 12, 18, 13, 13},
-			RefreshInterval: 2,
-			// Runtime:         RuntimeDocker, // default to docker
+			ColumnPercents:  columnPercents,
+			RefreshInterval: cfg.Performance.PollRate,
+			Runtime:         ContainerRuntime(cfg.Runtime.Type),
 		},
 		suspendRefresh:   false,
 		settingsSelected: 0,
@@ -853,7 +872,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			case "down", "j":
 				// now support 11 rows
-				if m.settingsSelected < 9 {
+				if m.settingsSelected < 10 {
 					m.settingsSelected++
 				}
 				return m, nil
@@ -870,15 +889,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					if m.settings.RefreshInterval > 1 {
 						m.settings.RefreshInterval--
 					}
+				} else if m.settingsSelected == 10 {
+					// toggle runtime option btwn docker and podman
+					if m.settings.Runtime == RuntimeDocker {
+						m.settings.Runtime = RuntimePodman
+					} else {
+						m.settings.Runtime = RuntimeDocker
+					}
 				}
-				// } else if m.settingsSelected == 10 {
-				// 	// toggle runtime option btwn docker and podman
-				// 	if m.settings.Runtime == RuntimeDocker {
-				// 		m.settings.Runtime = RuntimePodman
-				// 	} else {
-				// 		m.settings.Runtime = RuntimeDocker
-				// 	}
-				// }
 				return m, nil
 			case "right", "l", "+":
 				if m.settings.ColumnPercents == nil || len(m.settings.ColumnPercents) != 9 {
@@ -891,43 +909,82 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					if m.settings.RefreshInterval < 300 {
 						m.settings.RefreshInterval++
 					}
+					// test feature -
+				} else if m.settingsSelected == 10 {
+					// toggle runtime option
+					if m.settings.Runtime == RuntimeDocker {
+						m.settings.Runtime = RuntimePodman
+					} else {
+						m.settings.Runtime = RuntimeDocker
+					}
 				}
-				// test feature -
-				// } else if m.settingsSelected == 10 {
-				// 	// toggle runtime option
-				// 	if m.settings.Runtime == RuntimeDocker {
-				// 		m.settings.Runtime = RuntimePodman
-				// 	} else {
-				// 		m.settings.Runtime = RuntimeDocker
-				// 	}
-				// }
 				return m, nil
-			case "enter":
-				// normalize and exit settings
-				total := 0
-				for _, p := range m.settings.ColumnPercents {
-					total += p
+			case "s":
+				// save settings to yaml and restart
+				currentCfg, _ := config.Load()
+				// check if runtime is changed
+				runtimeChanged := string(m.settings.Runtime) != currentCfg.Runtime.Type
+				// Create .yaml config from current settings
+				cfg := &config.Config{
+					Layout: config.LayoutConfig{
+						ContainerId:        m.settings.ColumnPercents[0],
+						ContainerNameWidth: m.settings.ColumnPercents[1],
+						MemoryWidth:        m.settings.ColumnPercents[2],
+						CPUWidth:           m.settings.ColumnPercents[3],
+						NetIOWidth:         m.settings.ColumnPercents[4],
+						DiskIOWidth:        m.settings.ColumnPercents[5],
+						ImageWidth:         m.settings.ColumnPercents[6],
+						StatusWidth:        m.settings.ColumnPercents[7],
+						PortWidth:          m.settings.ColumnPercents[8],
+					},
+					Performance: config.PerformanceConfig{
+						PollRate: m.settings.RefreshInterval,
+					},
+					Runtime: config.RuntimeConfig{
+						Type: string(m.settings.Runtime),
+					},
 				}
-				if total == 0 {
-					m.settings.ColumnPercents = []int{8, 14, 6, 6, 10, 12, 18, 13, 13}
-				} else if total != 100 {
-					newp := make([]int, len(m.settings.ColumnPercents))
-					acc := 0
-					for i, p := range m.settings.ColumnPercents {
-						np := (p * 100) / total
-						newp[i] = np
-						acc += np
+
+				// Save to file
+				if err := cfg.Save(); err != nil {
+					m.statusMessage = fmt.Sprintf("Failed to save config: %v", err)
+				} else {
+					if runtimeChanged {
+						m.statusMessage = "Settings saved! Restarting app..."
+						// Create restart marker file so our app can detect and restart
+						markerPath := filepath.Join(os.TempDir(), ".dockmate_restart")
+						os.WriteFile(markerPath, []byte{}, 0644)
+						// Exit app to restart with new settings
+						return m, tea.Sequence(
+							tea.Tick(800*time.Millisecond, func(t time.Time) tea.Msg { return tea.QuitMsg{} }),
+						)
 					}
-					if acc < 100 {
-						newp[0] += 100 - acc
+					total := 0
+					for _, p := range m.settings.ColumnPercents {
+						total += p
 					}
-					m.settings.ColumnPercents = newp
+					if total == 0 {
+						m.settings.ColumnPercents = []int{8, 14, 6, 6, 10, 12, 18, 13, 13}
+					} else if total != 100 {
+						newp := make([]int, len(m.settings.ColumnPercents))
+						acc := 0
+						for i, p := range m.settings.ColumnPercents {
+							np := (p * 100) / total
+							newp[i] = np
+							acc += np
+						}
+						if acc < 100 {
+							newp[0] += 100 - acc
+						}
+						m.settings.ColumnPercents = newp
+					}
+					m.currentMode = modeNormal
+					m.suspendRefresh = false
+					m.statusMessage = "Settings saved!"
+					// apply new interval immediately and refresh once
+					return m, tea.Batch(fetchContainers(), tickCmd(time.Duration(m.settings.RefreshInterval)*time.Second))
 				}
-				m.currentMode = modeNormal
-				m.suspendRefresh = false
-				m.statusMessage = "setting saved"
-				// apply new interval immediately and refresh once
-				return m, tea.Batch(fetchContainers(), tickCmd(time.Duration(m.settings.RefreshInterval)*time.Second))
+				return m, nil
 			case "esc":
 				m.currentMode = modeNormal
 				m.suspendRefresh = false
@@ -1175,7 +1232,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				containerID := container.ID
 				m.statusMessage = "Opening interactive shell..."
 				// Use bash to clear terminal and exec into container shell
-				cmdStr := fmt.Sprintf("echo '# you are in interactive shell'; exec docker exec -it %s /bin/sh", containerID)
+				cmdStr := fmt.Sprintf("echo '# you are in interactive shell'; exec %s exec -it %s /bin/sh", string(m.settings.Runtime), containerID)
 				c := exec.Command("bash", "-lc", cmdStr)
 				return m, tea.ExecProcess(c, func(err error) tea.Msg {
 					if err != nil {
@@ -1456,6 +1513,27 @@ func (m model) View() string {
 		}
 	}
 
+	// If no rows were rendered and app isnt loading, show the message.
+	emptyNow := false
+	if m.composeViewMode {
+		emptyNow = !m.loading && len(m.flatList) == 0
+	} else {
+		emptyNow = !m.loading && len(m.containers) == 0
+	}
+
+	if emptyNow && rowsRendered == 0 {
+		text := "No containers to display"
+		pad := (width - visibleLen(text)) / 2
+		if pad < 0 {
+			pad = 0
+		}
+		line := strings.Repeat(" ", pad) + text
+		line = padRight(line, width)
+		b.WriteString(messageStyle.Render(line))
+		b.WriteString("\n")
+		rowsRendered++
+	}
+
 	// fill empty space
 	emptyRow := normalStyle.Render(strings.Repeat(" ", width))
 	for i := rowsRendered; i < rowsToShow; i++ {
@@ -1549,13 +1627,15 @@ func (m model) renderStatsSection(running, stopped, total int, uptime time.Durat
 		infoValueStyle.Render(fmt.Sprintf("%d/%d", running, total)))
 
 	// right side: total, uptime, refresh interval
-	infoLine := fmt.Sprintf("%s %s  %s %s  %s %s",
+	infoLine := fmt.Sprintf("%s %s  %s %s  %s %s %s %s",
 		infoLabelStyle.Render("Total:"),
 		infoValueStyle.Render(fmt.Sprintf("%d", total)),
 		infoLabelStyle.Render("Session:"),
 		infoValueStyle.Render(formatDuration(uptime)),
 		infoLabelStyle.Render("Refresh:"),
-		infoValueStyle.Render(fmt.Sprintf("%ds", m.settings.RefreshInterval)))
+		infoValueStyle.Render(fmt.Sprintf("%ds", m.settings.RefreshInterval)),
+		infoLabelStyle.Render("Runtime:"),
+		infoValueStyle.Render(string(m.settings.Runtime)))
 
 	// padding between left and right
 	leftLen := visibleLen(runningLine)
@@ -1838,6 +1918,19 @@ func (m model) renderLogsPanel(width int) string {
 
 // renderSettings shows a full-screen settings view where users can
 // adjust column percent allocations .
+// renderSettings generates a formatted string representation of the settings menu.
+// It takes the width of the display as an argument and returns a string that
+// contains the rendered settings menu with the appropriate styles applied.
+// The menu includes a title, a list of column names with their respective
+// percentage widths, a refresh interval row, and a runtime row. The currently
+// selected item is highlighted. Additionally, it provides navigation instructions
+// at the bottom of the menu.
+//
+// Parameters:
+//   - width: An integer representing the width of the display area for the menu.
+//
+// Returns:
+//   - A string containing the rendered settings menu.
 func (m model) renderSettings(width int) string {
 	var b strings.Builder
 
@@ -1882,17 +1975,18 @@ func (m model) renderSettings(width int) string {
 	b.WriteString("\n")
 
 	// // runtime row (index 10)
-	// b.WriteString("\n")
-	// runtime := fmt.Sprintf("Runtime: %s", m.settings.Runtime)
-	// if m.settingsSelected == 10 {
-	// 	b.WriteString(selectedStyle.Render(padRight(runtime, width)))
-	// } else {
-	// 	b.WriteString(normalStyle.Render(padRight(runtime, width)))
-	// }
-	// b.WriteString("\n")
+	b.WriteString("\n")
+	runtime := fmt.Sprintf("Runtime: %s", m.settings.Runtime)
+	if m.settingsSelected == 10 {
+		b.WriteString(selectedStyle.Render(padRight(runtime, width)))
+	} else {
+		b.WriteString(normalStyle.Render(padRight(runtime, width)))
+	}
+	b.WriteString("\n")
+	b.WriteString(normalStyle.Render("Changing the runtime will trigger a RESTART!"))
 
 	b.WriteString("\n")
-	instr := "←/→ or +/- adjust  •  ↑/↓ navigate   •  Enter save  •  Esc cancel"
+	instr := "[←/→] or [+/-] adjust  •  [↑/↓] navigate • [s] save  •   [Esc] cancel"
 	if visibleLen(instr) < width {
 		instr += strings.Repeat(" ", width-visibleLen(instr))
 	}
