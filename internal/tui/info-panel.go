@@ -58,6 +58,18 @@ func (m model) renderInfoPanel(width int) string {
 			value string
 		}{"Compose Project", c.ComposeProject})
 	}
+	if c.ComposeDirectory != "" {
+		infoFields = append(infoFields, struct {
+			label string
+			value string
+		}{"Compose Directory", c.ComposeDirectory})
+	}
+	if c.ComposeFileDirectory != "" {
+		infoFields = append(infoFields, struct {
+			label string
+			value string
+		}{"Compose File Directory", c.ComposeFileDirectory})
+	}
 	if c.ComposeService != "" {
 		infoFields = append(infoFields, struct {
 			label string

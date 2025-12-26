@@ -269,6 +269,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.cursor = max(0, len(m.containers)-1)
 		}
 
+		m.refreshInfoContainer()
+
 		m.updatePagination()
 		return m, nil
 
@@ -300,6 +302,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.cursor = max(0, len(m.flatList)-1)
 			}
 		}
+
+		m.refreshInfoContainer()
 		// just update pagination
 		m.updatePagination()
 		return m, nil

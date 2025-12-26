@@ -182,16 +182,42 @@ func (m model) renderTreeRow(row treeRow, selected bool, idW, nameW, memoryW, cp
 		ports = truncateToWidth(ports, portsW-6)
 	}
 
-	rowStr := fmt.Sprintf(" %-*s│ %-*s│ %-*s│ %-*s│ %-*s│ %-*s│ %-*s│ %-*s│ %-*s",
-		idW-1, id,
-		nameW-1, containerName,
-		memoryW-2, mem,
-		cpuW-2, cpu,
-		netIOW-1, netio,
-		blockIOW-1, blockio,
-		imageW-1, img,
-		statusW, status,
-		portsW-2, ports)
+	visible := m.settings.VisibleColumns
+	if visible == nil || len(visible) != 9 {
+		visible = []bool{true, true, true, true, true, true, true, true, true}
+		m.settings.VisibleColumns = visible
+	}
+	rows := []struct {
+		idx   int
+		width int
+		val   string
+	}{
+		{0, idW - 1, id},
+		{1, nameW - 1, containerName},
+		{2, memoryW - 2, mem},
+		{3, cpuW - 2, cpu},
+		{4, netIOW - 1, netio},
+		{5, blockIOW - 1, blockio},
+		{6, imageW - 1, img},
+		{7, statusW, status},
+		{8, portsW - 2, ports},
+	}
+
+	var rowStr string
+	first_row := true
+	for _, row := range rows {
+		if !visible[row.idx] {
+			continue
+		}
+		if first_row {
+			rowStr += fmt.Sprintf("%-*s", row.width, row.val)
+			first_row = false
+
+		} else {
+			rowStr += fmt.Sprintf("│ %-*s", row.width, row.val)
+		}
+
+	}
 
 	if visibleLen(rowStr) < totalWidth {
 		rowStr += strings.Repeat(" ", totalWidth-visibleLen(rowStr))
@@ -256,5 +282,51 @@ func (m *model) moveCursorDownTree() {
 			}
 		}
 		m.cursor = len(m.flatList) - 1
+	}
+}
+
+// refreshInfoContainer rebinds m.infoContainer to the current container instance
+func (m *model) refreshInfoContainer() {
+	if m.infoContainer == nil {
+		return
+	}
+	id := m.infoContainer.ID
+
+	// determine whether to prefer compose project containers
+	preferProject := m.infoContainer.ComposeProject != "" || m.composeViewMode
+
+	if preferProject {
+		// search project containers first
+		for _, p := range m.projects {
+			for i := range p.Containers {
+				if p.Containers[i].ID == id {
+					m.infoContainer = &p.Containers[i]
+					return
+				}
+			}
+		}
+		// fallback to normal containers
+		for i := range m.containers {
+			if m.containers[i].ID == id {
+				m.infoContainer = &m.containers[i]
+				return
+			}
+		}
+	} else {
+
+		for i := range m.containers {
+			if m.containers[i].ID == id {
+				m.infoContainer = &m.containers[i]
+				return
+			}
+		}
+		for _, p := range m.projects {
+			for i := range p.Containers {
+				if p.Containers[i].ID == id {
+					m.infoContainer = &p.Containers[i]
+					return
+				}
+			}
+		}
 	}
 }

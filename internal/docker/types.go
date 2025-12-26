@@ -27,12 +27,14 @@ type Container struct {
 	Memory string   // mem usage %
 	CPU    string   // cpu usage %
 	//PIDs    string // process count
-	Ports          string // ports
-	NetIO          string // network I/O
-	BlockIO        string // block I/O
-	ComposeProject string // compose project name (empty if standalone)
-	ComposeService string // compose service name
-	ComposeNumber  string // compose container number
+	Ports                string // ports
+	NetIO                string // network I/O
+	BlockIO              string // block I/O
+	ComposeProject       string // compose project name (empty if standalone)
+	ComposeService       string // compose service name
+	ComposeNumber        string // compose container number
+	ComposeDirectory     string
+	ComposeFileDirectory string
 }
 type ComposeInfo struct {
 	Project string

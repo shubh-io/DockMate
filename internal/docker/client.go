@@ -153,21 +153,30 @@ func ListContainers() ([]Container, error) {
 				state := strings.ToLower(e.State)
 
 				// check for compose project or quadlet unit
-				projectName := e.Labels["io.podman.compose.project"]
-				if projectName == "" {
-					if unit, ok := e.Labels["PODMAN_SYSTEMD_UNIT"]; ok {
-						projectName = strings.TrimSuffix(unit, ".service")
+				var projectName string
+				if runtime == "podman" {
+					projectName := e.Labels["io.podman.compose.project"]
+					if projectName == "" {
+						if unit, ok := e.Labels["PODMAN_SYSTEMD_UNIT"]; ok {
+							projectName = strings.TrimSuffix(unit, ".service")
+						}
 					}
+				} else {
+					projectName = e.Labels["com.docker.compose.project"]
+
 				}
 
 				container := Container{
-					ID:             e.Id,
-					Names:          e.Names,
-					Image:          e.Image,
-					Status:         e.Status,
-					State:          state,
-					Ports:          ports,
-					ComposeProject: projectName,
+					ID:                   e.Id,
+					Names:                e.Names,
+					Image:                e.Image,
+					Status:               e.Status,
+					State:                state,
+					Ports:                ports,
+					ComposeProject:       projectName,
+					ComposeService:       e.Labels["com.docker.compose.service"],
+					ComposeDirectory:     e.Labels["com.docker.compose.project.working_dir"],
+					ComposeFileDirectory: (e.Labels["com.docker.compose.project.working_dir"] + "/" + e.Labels["com.docker.compose.project.config_files"]),
 				}
 
 				if state == "running" {
@@ -212,13 +221,16 @@ func ListContainers() ([]Container, error) {
 				}
 
 				container := Container{
-					ID:             e.Id,
-					Names:          e.Names,
-					Image:          e.Image,
-					Status:         e.Status,
-					State:          state,
-					Ports:          ports,
-					ComposeProject: projectName,
+					ID:                   e.Id,
+					Names:                e.Names,
+					Image:                e.Image,
+					Status:               e.Status,
+					State:                state,
+					Ports:                ports,
+					ComposeProject:       projectName,
+					ComposeService:       e.Labels["com.docker.compose.service"],
+					ComposeDirectory:     e.Labels["com.docker.compose.project.working_dir"],
+					ComposeFileDirectory: (e.Labels["com.docker.compose.project.working_dir"] + "/" + e.Labels["com.docker.compose.project.config_files"]),
 				}
 
 				if state == "running" {
@@ -238,6 +250,7 @@ func ListContainers() ([]Container, error) {
 			Image  string `json:"Image"`
 			Status string `json:"Status"`
 			Ports  string `json:"Ports"`
+			Labels string `json:"Labels"`
 		}
 
 		scanner := bufio.NewScanner(strings.NewReader(string(output)))
@@ -274,12 +287,16 @@ func ListContainers() ([]Container, error) {
 			}
 
 			container := Container{
-				ID:     e.ID,
-				Names:  names,
-				Image:  e.Image,
-				Status: e.Status,
-				State:  state,
-				Ports:  e.Ports,
+				ID:                   e.ID,
+				Names:                names,
+				Image:                e.Image,
+				Status:               e.Status,
+				State:                state,
+				Ports:                e.Ports,
+				ComposeProject:       parseLabels(e.Labels)["com.docker.compose.project"],
+				ComposeService:       parseLabels(e.Labels)["com.docker.compose.service"],
+				ComposeDirectory:     parseLabels(e.Labels)["com.docker.compose.project.working_dir"],
+				ComposeFileDirectory: parseLabels(e.Labels)["com.docker.compose.project.config_files"],
 			}
 
 			if state == "running" {
