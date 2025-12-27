@@ -111,15 +111,15 @@ curl -fsSL https://raw.githubusercontent.com/shubh-io/DockMate/main/install.sh |
 
 DockMate is the `htop` for Docker—lightweight, keyboard-driven, and zero-config.
 
-* **⚡ Real-time Monitoring:** Zero-latency stats for CPU, Memory, Disk I/O, and Network.
+* **⚡ Real-time Monitoring:** Stats for CPU, Memory, Disk I/O, Network, etc.
 * **⌨️ Instant Control:** Start (`s`), Stop (`x`), Restart (`r`), and Remove (`d`) containers with single keystrokes.
-* **🔍 Rapid Debugging:** View logs (`l`) or spawn an interactive shell (`e`) instantly.
-* **🐳 Multi-Runtime:** Native support for **Docker** and **Podman** (with auto-detection).
+* **🔍 Debugging:** View logs (`l`) or spawn an interactive shell (`e`) instantly.
+* **🐳 Multi-Runtime:** Native support for **Docker** and **Podman**.
 * **📂 Deep Info Panel:** View Compose metadata, project directories, and source paths.
 * **⚙️ Persistent Settings:**
-* **Custom Shell:** Defaults to `/bin/sh`, but configurable to `/bin/bash`, `/bin/zsh`, etc.
-* **Refresh Rates:** Tune performance by adjusting data fetching intervals.
-* **State Saving:** Remembers your runtime (Docker/Podman) and column layouts on restart.
+*   * **Custom Shell:** Defaults to `/bin/sh`, but configurable to `/bin/bash`, `/bin/zsh`, etc.
+*   * **Refresh Rates:** Configurable Refresh Interval.
+*   * **State Saving:** Remembers your runtime (Docker/Podman) and column layouts on restart.
 
 
 
